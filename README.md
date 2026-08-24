@@ -3,7 +3,7 @@
 ![ASUS ROG Gladius III](https://m.media-amazon.com/images/I/51MWi-ZraSL.jpg)
 
 Filtro de software en Rust para el problema conocido de **"wheel kickback"**
-del ASUS ROG Gladius III (y otros ratones que usan el mismo encoder Kailh EN8080): al girar la
+del [ASUS ROG Gladius III](https://www.amazon.es/ASUS-ROG-Gladius-III-intercambiables/dp/B096XKJK1V) (y otros ratones que usan el mismo encoder Kailh EN8080): al girar la
 rueda, el encoder a veces genera un tick fantasma en dirección contraria,
 causando que la página suba cuando en realidad scrolleaste hacia abajo
 (o viceversa).
