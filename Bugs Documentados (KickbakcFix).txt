@@ -1,14 +1,14 @@
 ================================================================================
 wheel-fix (Kickback_Fix) - REGISTRO DE BUGS CORREGIDOS
 ================================================================================
-Última actualización: 2026-08-23
-Total de bugs: 4
+Última actualización: 2026-08-26
+Total de bugs: 5
 
 ================================================================================
 ÍNDICE POR SECCIONES
 ================================================================================
 1.  Compilación / bindings de Win32 (crate windows) ...... BUG 1,2
-2.  Lógica de detección de kickback ....................... BUG 3,4
+2.  Lógica de detección de kickback ....................... BUG 3,4,5
 3.  Limitaciones conocidas (no resueltas al 100%) ......... LIMITACIÓN 1
 ================================================================================
 
@@ -72,7 +72,7 @@ SOLUCIÓN:
   dirección nueva (ver BUG 4 y LIMITACIÓN 1 para la evolución de "cuántos").
 ARCHIVO: src/main.rs (hook_proc, variables CONFIRMED_DIR / PENDING_DIR /
   PENDING_COUNT)
-ESTADO: RESUELTO (mitigado; ver LIMITACIÓN 1 para el caso residual)
+ESTADO: RESUELTO (mitigado; superseded por BUG 5 — ver más abajo)
 
 ================================================================================
 BUG 4 — Confirmación con ventana de tiempo fija fallaba en scroll lento/pausado
@@ -102,6 +102,48 @@ ARCHIVO: src/main.rs (hook_proc, eliminación de CONFIRM_WINDOW_MS y
 ESTADO: RESUELTO
 
 ================================================================================
+BUG 5 — "Dirección confirmada" tenía pase libre incondicional
+================================================================================
+SÍNTOMA:
+  Con el esquema de CONFIRMED_DIR + PENDING_DIR (ver BUG 3), el usuario
+  reportó que al scrollear físicamente en una dirección real y sostenida,
+  el filtro seguía sin bloquear el kickback: en los logs, prácticamente
+  todos los ticks fantasma de la dirección "vieja" pasaban directo a
+  pantalla, y el candidato real (la dirección nueva, hacia la que el
+  usuario sí estaba girando físicamente) tardaba muchísimo en acumular
+  confirmaciones, avanzando de forma salteada e irregular en vez de
+  progresar de forma consecutiva.
+CAUSA:
+  Cualquier tick que coincidiera con CONFIRMED_DIR pasaba directo a
+  pantalla sin pasar por ningún tipo de filtro ("pase libre"). El problema
+  es que el propio kickback también puede ocurrir en esa dirección
+  "confirmada": mientras el usuario giraba de verdad hacia la nueva
+  dirección, el encoder metía ticks fantasma hacia la dirección vieja
+  (que coincidían con CONFIRMED_DIR). Esos fantasmas no solo pasaban
+  gratis, sino que además reiniciaban el candidato real que se estaba
+  construyendo, impidiendo que llegara a acumular las confirmaciones
+  necesarias. El resultado observable era que el scroll parecía "pegado"
+  a la dirección vieja indefinidamente.
+SOLUCIÓN:
+  Se eliminó por completo el concepto de "dirección confirmada con pase
+  libre". El esquema CONFIRMED_DIR / PENDING_DIR / PENDING_COUNT se
+  reemplazó por uno más simple: solo existen LAST_DIR (última dirección
+  vista) y STREAK_COUNT (racha consecutiva). Todo tick pasa por el mismo
+  conteo de racha, sin excepción — ninguna dirección tiene trato especial.
+  Si la dirección del tick coincide con LAST_DIR, la racha suma uno; si no
+  coincide, la racha se reinicia en 1 para la nueva dirección. Un tick solo
+  pasa a pantalla cuando su racha alcanza REQUIRED_CONFIRMATIONS.
+RESULTADO:
+  El usuario confirmó mejora perceptible tras el cambio — el kickback ya
+  no se siente tanto. El problema residual que persiste corresponde a
+  rachas de kickback más largas que REQUIRED_CONFIRMATIONS (ver
+  LIMITACIÓN 1), no al defecto de este bug.
+ARCHIVO: src/main.rs (hook_proc; se eliminaron CONFIRMED_DIR, PENDING_DIR,
+  PENDING_COUNT, confirm_direction, start_candidate; se añadieron LAST_DIR,
+  STREAK_COUNT, update_streak)
+ESTADO: RESUELTO
+
+================================================================================
 LIMITACIÓN 1 — Rachas de kickback más largas que REQUIRED_CONFIRMATIONS
   se cuelan igual
 ================================================================================
@@ -119,7 +161,10 @@ EVIDENCIA:
   reversiones rápidas y deliberadas: se observó al menos un caso durante
   scroll normal (Nexus Mods, YouTube, Zed), aunque con baja frecuencia
   (1 falso positivo en más de 15 cambios de dirección reales en una sesión
-  de prueba prolongada).
+  de prueba prolongada). Tras la corrección de BUG 5, el usuario reportó
+  que el kickback residual que persiste corresponde a rachas del encoder
+  más largas que REQUIRED_CONFIRMATIONS (actualmente 6) — comportamiento
+  esperado dado esta limitación, no un nuevo defecto del filtro.
 POR QUÉ NO SE RESUELVE AL 100%:
   No existe un valor fijo de REQUIRED_CONFIRMATIONS que cubra toda racha
   posible sin volver el filtro perceptiblemente lento en cambios de
@@ -128,10 +173,13 @@ POR QUÉ NO SE RESUELVE AL 100%:
 MITIGACIÓN PLANEADA:
   Hacer REQUIRED_CONFIRMATIONS ajustable en tiempo real desde la GUI
   (rango 1-10), para que el usuario pueda subirlo si el patrón de kickback
-  de su unidad empeora, sin necesidad de recompilar.
+  de su unidad empeora, sin necesidad de recompilar. A más largo plazo,
+  el diseño v2 (detección anidada + compensación por inyección, ver
+  Redesing.txt) apunta a resolver el trade-off de raíz.
 ARCHIVO: src/main.rs (const REQUIRED_CONFIRMATIONS)
 ESTADO: NO RESUELTO (mitigación parcial vía número de confirmaciones;
-  pendiente de exponer como control ajustable en la GUI)
+  pendiente de exponer como control ajustable en la GUI, y evaluación de
+  diseño v2 a más largo plazo)
 
 ================================================================================
 FIN DEL REGISTRO
