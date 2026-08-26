@@ -1,0 +1,132 @@
+================================================================================
+wheel-fix — ARQUITECTURA GENERAL DEL PROYECTO
+================================================================================
+Fecha: 2026-08-24
+Estado: Documento vivo — se actualiza conforme el proyecto evoluciona.
+
+================================================================================
+1. MOTIVACIÓN DE FONDO
+================================================================================
+
+El proyecto nace de un defecto de hardware puntual: el ASUS ROG Gladius III
+(mouse gaming de gama media-alta) usa un encoder de rueda Kailh EN8080 que
+presenta "wheel kickback" — genera ticks fantasma en dirección contraria al
+giro real del usuario, de forma errática y en rachas de tamaño variable
+(observadas de 2 hasta 6+ ticks consecutivos en pruebas).
+
+Es notable la desproporción entre causa y respuesta: un componente de bajo
+costo, mal elegido o mal implementado en un producto de precio medio-alto,
+terminó requiriendo una solución de ingeniería que abarca múltiples
+disciplinas (ver sección 2) para mitigarlo por software, ya que no hay
+arreglo de hardware accesible sin reemplazar el encoder físicamente.
+
+================================================================================
+2. DISCIPLINAS QUE TOCA EL PROYECTO
+================================================================================
+
+Lo que empezó como "un filtro simple" terminó abarcando:
+
+  - Hooks de bajo nivel de sistema operativo (WH_MOUSE_LL en Windows)
+  - Concurrencia y estado compartido entre distintos contextos de
+    ejecución (el hook, el servidor HTTP, la futura ventana/ícono)
+  - Diseño de un protocolo HTTP mínimo para configuración
+  - Front-end web (HTML/CSS/JS) para la interfaz de configuración
+  - Empaquetado y portabilidad multiplataforma (Windows y Linux)
+  - Diseño de un patrón de arquitectura propio (SOM) para organizar
+    todo lo anterior de forma sostenible
+
+Cada capa se agregó en respuesta a evidencia real durante el desarrollo,
+no por acumulación arbitraria de alcance — ver Bugs_Documentados y
+wheel-fix-v2-diseno.txt para el historial de decisiones que llevó a cada
+una.
+
+================================================================================
+3. CAPAS DEL PROYECTO Y SUS RESPONSABILIDADES
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  CAPA DE PLATAFORMA (específica de SO, NO portable)           │
+  │  - Windows: WH_MOUSE_LL, SetWindowsHookExW, MSLLHOOKSTRUCT    │
+  │  - Linux (futuro): evdev, /dev/input                          │
+  │  Responsabilidad única: capturar eventos crudos de la rueda   │
+  │  del mouse y entregarlos a la capa de lógica, sin decidir      │
+  │  nada sobre si son válidos o no.                               │
+  └─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  CAPA DE LÓGICA (pura, portable, sin dependencias de SO)       │
+  │  - Estado: CONFIRMED_DIR, PENDING_DIR, PENDING_COUNT, etc.     │
+  │  - Algoritmo de detección v1 (confirmación por conteo) y       │
+  │    v2 (detección anidada + compensación, ver diseño v2)        │
+  │  Responsabilidad única: decidir, para cada tick que entra,     │
+  │  si debe pasar, bloquearse, o disparar una acción de           │
+  │  compensación. No sabe nada de Windows, HTTP, ni HTML.         │
+  └─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │  CAPA DE PLATAFORMA (específica de SO, salida)                 │
+  │  - Windows: CallNextHookEx (dejar pasar) / SendInput           │
+  │    (inyectar compensación, v2)                                 │
+  │  Responsabilidad única: ejecutar la decisión de la capa de     │
+  │  lógica sobre el sistema operativo real.                       │
+  └─────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  CAPA DE CONFIGURACIÓN (servidor HTTP local, portable)         │
+  │  - tiny_http escuchando en 127.0.0.1:PUERTO                    │
+  │  - Endpoints: GET /config, POST /config                        │
+  │  Responsabilidad única: exponer lectura/escritura de las       │
+  │  constantes ajustables (REQUIRED_CONFIRMATIONS y, tras v2,      │
+  │  UMBRAL_DESCARTE, UMBRAL_VIGILANCIA, TECHO_KICKBACK,            │
+  │  BLOQUE_NUEVO_INTENTO, OBJETIVO_COMPENSACION) leyendo y         │
+  │  escribiendo directamente sobre los mismos Atomic* que usa      │
+  │  la capa de lógica. Corre en el mismo proceso — sin IPC ni      │
+  │  archivos intermedios.                                          │
+  └─────────────────────────────────────────────────────────────┘
+
+  ┌─────────────────────────────────────────────────────────────┐
+  │  CAPA DE INTERFAZ (navegador, portable, sin compilar aparte)   │
+  │  - HTML/CSS/JS servido por la capa de configuración            │
+  │  Responsabilidad única: presentar los controles (sliders,      │
+  │  campos numéricos) y hacer fetch() hacia los endpoints de la   │
+  │  capa de configuración. No tiene lógica de negocio propia.      │
+  └─────────────────────────────────────────────────────────────┘
+
+================================================================================
+4. POR QUÉ ESTA SEPARACIÓN IMPORTA PARA LA PORTABILIDAD
+================================================================================
+
+Solo las dos capas de "PLATAFORMA" (captura y salida) necesitan
+reescribirse por sistema operativo. Todo lo demás — lógica de detección,
+servidor HTTP, interfaz web — es el mismo código sin cambios en Windows o
+Linux. Esto es lo que permite el objetivo declarado del proyecto: un
+ejecutable para Windows y Linux, con una GUI de configuración que corre
+en cualquier navegador, sin depender del sistema operativo.
+
+================================================================================
+5. RELACIÓN CON SOM (patrón de arquitectura, en evolución paralela)
+================================================================================
+
+Este proyecto es el primer caso de uso real donde SOM (tal como estaba
+documentado, adaptado de un mod de GTA V sin concurrencia real) muestra
+huecos concretos que necesitan resolverse:
+
+  - Concurrencia / estado compartido entre módulos: el hook (un
+    contexto de ejecución) y el futuro servidor HTTP (otro) necesitan
+    leer/escribir el mismo estado de forma segura. SOM v1 no tiene
+    ninguna regla sobre esto.
+  - Suministro de dependencias: los módulos actuales son estáticos
+    (Atomic* globales) por simplicidad, pero con una capa de
+    configuración separada, podría valer la pena revisar si eso sigue
+    siendo suficiente o si conviene inyectar el estado compartido de
+    forma explícita entre capas.
+
+Estas reglas se formalizan en el documento de SOM cuando se implementen
+las piezas correspondientes, siguiendo el mismo método usado para el
+resto del proyecto: evidencia real primero, regla general después.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================

@@ -11,7 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 static LAST_DIR: AtomicI32 = AtomicI32::new(0);
 static STREAK_COUNT: AtomicI32 = AtomicI32::new(0);
 
-const REQUIRED_CONFIRMATIONS: i32 = 4;
+const REQUIRED_CONFIRMATIONS: i32 = 5;
 
 fn pass_through(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     unsafe { CallNextHookEx(HHOOK(std::ptr::null_mut()), code, wparam, lparam) }
