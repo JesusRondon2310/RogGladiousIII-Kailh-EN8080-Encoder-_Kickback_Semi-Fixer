@@ -158,7 +158,7 @@ después. El código de detección debe quedar funcionando al 100% primero —
 sin cambios pendientes sobre su lógica central — y solo entonces se
 construye encima (GUI, hotkey, autostart, bandeja, etc.).
 
-1. Modularizar `main.rs` — **ya hecho** (`detection.rs`, 85 líneas)
+1. Modularizar `main.rs` — **ya hecho** (`detection.rs`, 115 líneas)
 2. **Este diseño v2** (detección anidada + compensación simultánea) — primero
 3. Hotkey global para activar/desactivar el filtro
 4. `REQUIRED_CONFIRMATIONS` y demás constantes ajustables en tiempo real vía GUI
@@ -192,14 +192,14 @@ flowchart TD
     K --> L[Sigue compensando hasta<br/>completar OBJETIVO_COMPENSACION]
     L --> M[Flujo normal<br/>deja de bloquear e inyectar]
 
-    style D fill:#e8e8e8,stroke:#888
-    style E fill:#f5d0c5,stroke:#c0684a
-    style I fill:#f5d0c5,stroke:#c0684a
-    style F fill:#f9e0a8,stroke:#c99a3a
-    style G fill:#f9e0a8,stroke:#c99a3a
-    style K fill:#b8ddc9,stroke:#4a9670
-    style L fill:#b8ddc9,stroke:#4a9670
-    style M fill:#e8e8e8,stroke:#888
+    style D fill:#e8e8e8,stroke:#888,color:#1a1a1a
+    style E fill:#f5d0c5,stroke:#c0684a,color:#5c2a15
+    style I fill:#f5d0c5,stroke:#c0684a,color:#5c2a15
+    style F fill:#f9e0a8,stroke:#c99a3a,color:#5c4413
+    style G fill:#f9e0a8,stroke:#c99a3a,color:#5c4413
+    style K fill:#b8ddc9,stroke:#4a9670,color:#1a4030
+    style L fill:#b8ddc9,stroke:#4a9670,color:#1a4030
+    style M fill:#e8e8e8,stroke:#888,color:#1a1a1a
 ```
 
 **Leyenda de colores:**
