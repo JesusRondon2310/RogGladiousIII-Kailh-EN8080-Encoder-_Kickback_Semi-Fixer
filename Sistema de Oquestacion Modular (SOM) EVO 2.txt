@@ -1,6 +1,7 @@
 ================================================================================
 SISTEMA DE ORQUESTACIÓN MODULAR (SOM)
-Documentación completa y actualizada (versión genérica para C#)
+
+Documentación completa y actualizada (segunda edición)
 ================================================================================
 
 ## INDICE
@@ -13,17 +14,26 @@ Documentación completa y actualizada (versión genérica para C#)
 6. Convenciones de código
 7. Excepciones controladas (el 20% mutable)
 8. Ejemplo práctico: estructura de una aplicación modular
-9. Comparación con otros patrones
+9. Comparación y complementariedad con otros patrones
 10. Origen y filosofía
+11. (Reservado)
+12. Guía de aplicación de SOM (Multi-lenguaje)
+13. Implementación de SOM en diferentes lenguajes
 
 ================================================================================
 
 1. # ¿QUÉ ES SOM?
 
-SOM (Sistema de Orquestación Modular) es un patrón de arquitectura de software
-que organiza el código en módulos independientes y encapsulados, donde cada
-módulo expone un único punto de entrada público (el orquestador) y mantiene
-todo su funcionamiento interno oculto al resto de la aplicación.
+SOM (Sistema de Orquestación Modular) es un patrón de encapsulamiento 
+especializado en gestión de errores determinista y trazabilidad (backtracing)
+sin dependencia de herramientas de depuración (debuggers).
+
+Organiza el sistema en módulos independientes donde cada uno expone un único
+punto de entrada público (el orquestador) y oculta estrictamente su funcionamiento
+interno al resto de la aplicación. Al forzar flujos de ejecución unidireccionales
+y lineales, el patrón confina los fallos y produce un stack trace predecible
+que permite diagnosticar la causa raíz de cualquier anomalía directamente desde
+los logs de producción.
 
 Nació de la adaptación del sistema de módulos de Rust a C#, y es aplicable a
 cualquier lenguaje que permita distinguir entre código público y privado.
@@ -58,6 +68,15 @@ mezclen lógica de negocio, persistencia y UI.
   funcionalidad que no puede dividirse), se acepta temporalmente, pero queda
   registrada como deuda técnica para futura refactorización.
 
+**Excepción para proyectos de gran escala:**
+En sistemas con un número elevado de módulos (ej. > 50) y equipos de desarrollo
+consolidados, el límite de 125 líneas puede resultar excesivamente restrictivo.
+En estos casos, el equipo puede acordar un límite superior (ej. 500 o 750 líneas)
+siempre que se mantenga el principio de "una responsabilidad por archivo" y
+la trazabilidad siga siendo clara. Esta ampliación debe documentarse en la
+guía de estilo del proyecto y revisarse periódicamente para evitar que el
+archivo se convierta en un "cajón desastre".
+
 ## 2.4. Trazabilidad directa
 
 El flujo de ejecución es lineal y predecible. Una acción en el menú llama al
@@ -84,6 +103,18 @@ necesidad real: síntoma concreto → causa → regla general. No se agrega una
 regla, ni estructura (carpetas, archivos, capas), "por si acaso". Un archivo
 o un módulo se divide cuando de verdad crece o mezcla responsabilidades, no
 antes.
+
+## 2.8. Implementación por lenguaje
+
+SOM se apoya en el sistema de visibilidad de cada lenguaje. Los principios
+se aplican de forma consistente, pero la sintaxis y los mecanismos varían:
+
+- **C#:** `public` para el orquestador, `internal` para los internos.
+- **Rust:** Todo es privado por defecto; `pub` para el orquestador; `pub(super)` para visibilidad entre hermanos.
+- **Python:** Convención de `_` para privado; `__all__` en `__init__.py` para controlar la exportación.
+- **Go:** Tipo exportado (mayúscula) con métodos exportados; el resto minúscula (privado al paquete).
+
+La implementación concreta se detalla en la sección 13.
 
 # ================================================================================
 3. NIVELES DE PROFUNDIDAD Y NOMENCLATURA DE ARCHIVOS
@@ -327,8 +358,11 @@ MyApp/
     └── StringHelper.cs
 
 # ================================================================================
-9. COMPARACIÓN CON OTROS PATRONES
+9. COMPARACIÓN Y COMPLEMENTARIEDAD CON OTROS PATRONES
 # ================================================================================
+
+SOM es un patrón de encapsulamiento, no una arquitectura. Por eso no compite
+con MVC, Hexagonal o Clean Architecture; los complementa.
 
 | Patrón             | Tamaño archivos        | Encapsulamiento | Trazabilidad | Curva aprendizaje |
 | ------------------ | ---------------------- | --------------- | ------------ | ----------------- |
@@ -338,8 +372,171 @@ MyApp/
 | Event-driven       | Pequeños               | Muy alto        | Muy baja     | Alta              |
 | Clean Architecture | Pequeños/medianos      | Muy alto        | Baja         | Muy alta          |
 
+**Cuándo usar cada combinación:**
+
+- **Proyecto pequeño-mediano (ej. utilidad, script, mod):** SOM solo es suficiente.
+  La estructura SOM (Core → Manager → Handler) proporciona organización clara
+  y trazabilidad sin complejidad adicional.
+
+- **Proyecto grande (ej. aplicación empresarial, sistema con múltiples frontends):**
+  SOM + Hexagonal/Clean Architecture. SOM gestiona la trazabilidad dentro de
+  los casos de uso; Hexagonal gestiona el desacoplamiento de infraestructura.
+
+- **Proyecto con UI compleja:** SOM + MVC. SOM gestiona la lógica detrás del
+  Controlador y dentro del Modelo; MVC gestiona la interacción con el usuario.
+
 # ================================================================================
-10. ORIGEN Y FILOSOFÍA
+10. GUÍA DE APLICACIÓN DE SOM (Multi-lenguaje)
+# ================================================================================
+
+Esta guía asume que quieres aplicar SOM a un proyecto nuevo. Si el proyecto
+ya existe, se puede aplicar de forma gradual, módulo por módulo.
+
+## Paso 1: Identificar los módulos de alto nivel
+Pregunta: ¿Qué partes del sistema son independientes entre sí?
+- Ejemplos: `UI`, `Lógica`, `Persistencia`, `Red`, `Hardware`.
+
+## Paso 2: Definir el orquestador de cada módulo
+El orquestador es el único punto de entrada público. Expone métodos que
+representan las operaciones que el módulo ofrece al resto del sistema.
+- **C#:** Clase `public` con métodos públicos.
+- **Rust:** `pub fn` en el módulo raíz; exportar con `pub use`.
+- **Python:** Clase con métodos públicos; exponer en `__all__`.
+- **Go:** Tipo exportado (mayúscula) con métodos exportados.
+
+## Paso 3: Dividir la lógica interna en mini-orquestadores
+- Nivel 1: `Core` (orquestador principal).
+- Nivel 2: `Manager` (coordinador de funcionalidades).
+- Nivel 3: `Handler` (lógica específica).
+- Los mini-orquestadores pueden ser internos o públicos según la necesidad.
+
+## Paso 4: Asegurar que cada archivo tenga una sola responsabilidad
+- Si un archivo supera el límite acordado (120 líneas por defecto), extrae
+  responsabilidades a nuevos mini-orquestadores o componentes internos.
+- En proyectos grandes, se puede ampliar el límite (ver sección 2.3).
+
+## Paso 5: Establecer las dependencias entre módulos
+- Un módulo SOLO accede al orquestador de otro módulo.
+- NUNCA accede directamente a sus internos.
+- Si un módulo necesita funcionalidad de otro, llama a su orquestador.
+
+## Paso 6: Configurar el registro de contexto
+- Cada orquestador y mini-orquestador registra su entrada y salida con contexto.
+- En caso de error, el log debe decir: "Módulo X, paso Y, con datos Z, falló".
+
+## Paso 7: (Opcional) Añadir simulación y pruebas
+- Si el módulo interactúa con hardware o servicios externos, extrae esa lógica
+  a componentes internos que puedan ser reemplazados por versiones de simulación.
+- Escribe pruebas unitarias que verifiquen el comportamiento del algoritmo
+  sin las dependencias externas.
+
+## Paso 8: (Opcional) Integrar con MVC o Hexagonal
+- Si el proyecto es grande, usa MVC para la UI y Hexagonal para la infraestructura.
+- SOM se encarga de la trazabilidad dentro de los casos de uso.
+
+# ================================================================================
+12. IMPLEMENTACIÓN DE SOM EN DIFERENTES LENGUAJES
+# ================================================================================
+
+## 12.1. C# ======================================================================
+
+- **Orquestador:** `public static class Core` o `public class Core` con métodos públicos.
+- **Internos:** `internal` (solo visibles dentro del ensamblado).
+- **Helpers globales:** `public static` en carpeta `Helpers/`.
+
+**Ejemplo:**
+```csharp
+// Core.cs
+public static class Core {
+    public static void Execute() {
+        // Delegar en internos
+    }
+}
+// Core.cs
+
+// Interno (no visible fuera del módulo)
+internal static class Helper {
+    internal static void DoWork() { }
+}
+// Interno
+
+## 12.2. Rust ====================================================================
+
+- **Orquestador:** `pub fn` en `mod.rs` o `lib.rs`.
+- **Internos:** privados por defecto; `pub(super)` para visibilidad entre hermanos.
+- **Exportación:** `pub use` en el archivo manifiesto.
+
+**Ejemplo:**
+
+```rust
+// lib.rs
+mod core;
+mod internals;
+// lib.rs
+
+pub use core::Core;  // Solo se exporta el orquestador
+
+// core.rs
+pub fn execute() {
+    // Delegar en internos
+}
+// core.rs
+
+// internals.rs (privado, no exportado)
+pub(super) fn helper() { }
+// internals.rs
+
+## 12.3. Python ==================================================================
+
+- **Orquestador:** Clase con métodos públicos.
+- **Internos:** Convención `_` (privado), no importar en `__all__`.
+- **Módulos:** Cada archivo es un módulo; `__init__.py` controla la exportación.
+
+**Ejemplo:**
+
+```python
+# core.py
+class Core:
+    def execute(self):
+        # Delegar en internos
+
+# _internals.py (privado)
+def _helper(): pass
+
+# __init__.py
+from .core import Core
+__all__ = ['Core']  # Solo se exporta el orquestador
+
+## 12.4. Go ======================================================================
+
+- **Orquestador:** Tipo exportado (mayúscula) con métodos exportados.
+- **Internos:** Tipos y funciones con minúscula (privados al paquete).
+- **Paquete:** El orquestador es la única API pública del paquete.
+
+**Ejemplo:**
+
+```go
+package core
+
+// Core es el orquestador público
+type Core struct{}
+
+func (c *Core) Execute() {
+    // Delegar en internos
+}
+
+// helper es privado (minúscula)
+func helper() {}
+
+## 12.5. Nota sobre lenguajes dinámicos ========================================
+
+En lenguajes como Python o JavaScript, el encapsulamiento no es impuesto por el
+compilador, sino por convención y herramientas (linters, type checkers). SOM se
+adapta a estas limitaciones usando convenciones de nomenclatura (ej. `_privado`)
+y configurando adecuadamente los sistemas de exportación de módulos.
+
+# ================================================================================
+13. ORIGEN Y FILOSOFÍA
 # ================================================================================
 
 SOM nace de la adaptación del sistema de módulos de Rust a C#. En Rust, cada
@@ -370,3 +567,7 @@ los internos hermanos se llamen entre sí, sin filtrar nada hacia afuera.
 Detalle que cambia entre lenguajes: en Rust las constantes son tipadas —
 donde en C# un `const int ZERO = 0` sirve en varios contextos, en Rust hay
 que declarar una constante por cada tipo.
+
+================================================================================
+FIN DEL DOCUMENTO
+================================================================================
