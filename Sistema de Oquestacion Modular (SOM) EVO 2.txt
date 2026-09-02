@@ -1,0 +1,372 @@
+================================================================================
+SISTEMA DE ORQUESTACIÓN MODULAR (SOM)
+Documentación completa y actualizada (versión genérica para C#)
+================================================================================
+
+## INDICE
+
+1. ¿Qué es SOM?
+2. Principios fundamentales
+3. Niveles de profundidad y nomenclatura de archivos
+4. Roles de los archivos (Orquestador, Mini-Orquestador, Interno)
+5. Reglas de encapsulamiento y acceso
+6. Convenciones de código
+7. Excepciones controladas (el 20% mutable)
+8. Ejemplo práctico: estructura de una aplicación modular
+9. Comparación con otros patrones
+10. Origen y filosofía
+
+================================================================================
+
+1. # ¿QUÉ ES SOM?
+
+SOM (Sistema de Orquestación Modular) es un patrón de arquitectura de software
+que organiza el código en módulos independientes y encapsulados, donde cada
+módulo expone un único punto de entrada público (el orquestador) y mantiene
+todo su funcionamiento interno oculto al resto de la aplicación.
+
+Nació de la adaptación del sistema de módulos de Rust a C#, y es aplicable a
+cualquier lenguaje que permita distinguir entre código público y privado.
+
+# ================================================================================
+2. PRINCIPIOS FUNDAMENTALES
+# ================================================================================
+
+## 2.1. Un orquestador por módulo
+
+Cada módulo tiene un único archivo o clase pública que actúa como punto de
+entrada. Nadie más en el módulo es visible desde fuera.
+
+## 2.2. Encapsulamiento estricto
+
+Todas las clases, funciones y estructuras internas del módulo son inaccesibles
+desde otros módulos. El compilador, el intérprete o el sistema de build lo
+imponen.
+
+## 2.3. Archivos pequeños y responsables
+
+Cada archivo tiene una sola responsabilidad. No hay archivos de 300 líneas que
+mezclen lógica de negocio, persistencia y UI.
+
+**Límite de líneas por archivo:**
+- **Recomendado:** 120 líneas.
+- **Máximo aceptable (aún SOM):** 125 líneas.
+- Por encima de 125 líneas, el archivo deja de ser SOM y debe refactorizarse
+  extrayendo responsabilidades en nuevos componentes internos o mini-orquestadores,
+  o subiendo de nivel si corresponde.
+- Si un archivo alcanza 125 líneas por razones justificadas (cohesión máxima,
+  funcionalidad que no puede dividirse), se acepta temporalmente, pero queda
+  registrada como deuda técnica para futura refactorización.
+
+## 2.4. Trazabilidad directa
+
+El flujo de ejecución es lineal y predecible. Una acción en el menú llama al
+orquestador, que delega en sus internos. El stack trace señala exactamente
+dónde falló algo.
+
+## 2.5. Independencia entre módulos
+
+Los módulos no se acoplan entre sí. Si un módulo falla, otro no se entera.
+Si un módulo necesita algo de otro, lo pide a través de su orquestador público.
+
+## 2.6. Delegación de entrada (UI / controladores)
+
+El orquestador principal (Core, Manager o Handler) **no debe contener lógica
+de detección de entrada** (eventos de teclado, ratón, etc.). Esa lógica debe
+delegarse en mini-orquestadores especializados (por ejemplo, InputHandler) o
+en componentes internos específicos. El orquestador solo invoca métodos de sus
+mini-orquestadores; nunca realiza comprobaciones de entrada directamente.
+
+## 2.7. Evolución por evidencia, no por especulación
+
+Las reglas de SOM se formalizan solo cuando el proyecto choca con la
+necesidad real: síntoma concreto → causa → regla general. No se agrega una
+regla, ni estructura (carpetas, archivos, capas), "por si acaso". Un archivo
+o un módulo se divide cuando de verdad crece o mezcla responsabilidades, no
+antes.
+
+# ================================================================================
+3. NIVELES DE PROFUNDIDAD Y NOMENCLATURA DE ARCHIVOS
+# ================================================================================
+
+Los módulos se organizan en carpetas con un máximo de 3 niveles de profundidad
+desde la raíz del proyecto.
+
+Cada nivel tiene un nombre de archivo específico para su orquestador:
+
+Nivel 1: Core.cs - Es el orquestador principal del módulo de primer nivel.
+         Ejemplo: `Inventory/Core.cs`
+
+Nivel 2: Manager.cs - Es el orquestador del submódulo de segundo nivel.
+         Coordina un conjunto de funcionalidades relacionadas.
+         Ejemplo: `Inventory/Transaction/Manager.cs`
+
+Nivel 3: Handler.cs - Es el orquestador del submódulo de tercer nivel.
+         Contiene la lógica de negocio específica y coordina componentes internos.
+         Ejemplo: `Inventory/Transaction/Validation/Handler.cs`
+
+Los archivos que no son orquestadores se nombran según su responsabilidad
+específica (ItemValidator.cs, PriceCalculator.cs, etc.).
+
+# ================================================================================
+4. ROLES DE LOS ARCHIVOS
+# ================================================================================
+
+## 4.1. Orquestador principal del módulo
+
+- Es el único punto de entrada público del módulo.
+- Coordina a los mini-orquestadores y componentes internos.
+- Nombres reservados: Core.cs (nivel 1), Manager.cs (nivel 2), Handler.cs (nivel 3).
+- No depende de ningún otro archivo dentro del mismo nivel.
+
+## 4.2. Mini-Orquestador
+
+- Contiene lógica de negocio específica.
+- Coordina otros componentes internos.
+- Depende del orquestador principal de su módulo.
+- Nomenclatura: NombreEspecificoHandler.cs (ej: PriceCalculatorHandler.cs).
+- **Visibilidad:** 
+  - Si solo es utilizado dentro de su propio módulo → `internal`.
+  - Si debe ser accedido desde otros módulos (por ejemplo, para ser invocado por
+    otro orquestador) → `public`. En este caso, el acceso sigue estando controlado
+    a través del orquestador principal del módulo, pero la visibilidad pública
+    permite la comunicación sin violar el encapsulamiento.
+
+## 4.3. Componente interno
+
+- Clases que no son orquestadores ni mini-orquestadores.
+- Pueden ser structs de datos, helpers, factories, etc.
+- **Visibilidad:** `internal` por defecto.
+- **Excepción:** Los helpers de uso general ubicados en la carpeta `Helpers/`
+  deben ser `public static` para permitir su reutilización desde cualquier módulo
+  del proyecto (ejemplos: Timers.cs, StringHelper.cs, MathUtils.cs, Constants.cs).
+- `Helpers/` es SOLO para lo reutilizable entre varios módulos. Un valor,
+  constante o utilidad que solo usa un módulo se queda dentro de ese módulo,
+  no sube a `Helpers/`.
+
+# ================================================================================
+5. REGLAS DE ENCAPSULAMIENTO Y ACCESO
+# ================================================================================
+
+## 5.1. Visibilidad
+
+- Orquestador principal: `public` (solo él es accesible desde fuera).
+- Mini-orquestadores: `internal` o `public` según la regla 4.2.
+- Componentes internos: `internal` (salvo helpers de `Helpers/` que son `public static`).
+
+## 5.2. Dependencias
+
+- El orquestador principal (nivel 1) depende de sus Managers (nivel 2).
+- El Manager (nivel 2) depende de sus Handlers (nivel 3) y mini-orquestadores.
+- El Handler (nivel 3) depende de sus mini-orquestadores y componentes internos.
+- Los componentes internos no dependen de orquestadores ni de otros módulos.
+
+## 5.3. Comunicación entre módulos
+
+- Un módulo solo accede al orquestador público de otro módulo.
+- Nunca accede directamente a sus internos.
+- Los componentes internos de un MISMO módulo se comunican entre sí sin
+  restricción: comparten el mismo encapsulador.
+- El cruce ENTRE módulos siempre pasa por el orquestador del módulo destino,
+  que delega internamente en el componente correspondiente. Ni siquiera el
+  orquestador de otro módulo toca los internos ajenos directamente.
+
+Analogía: un hotel con varios pisos. El personal de un piso se pide cosas
+entre sí libremente. Si alguien necesita algo de otro piso, no sube y lo
+toma — habla con el recepcionista de ese piso (el orquestador), que manda a
+un conserje (un interno o mini-orquestador) a dárselo.
+
+# ================================================================================
+6. CONVENCIONES DE CÓDIGO COMO RECOMENDACIONES
+# ================================================================================
+
+## 6.1. Nombres de archivos y clases
+
+- Los archivos y las clases públicas principales deben tener el mismo nombre.
+- Las clases internas pueden usar nombres descriptivos según su función.
+
+## 6.2. Comentarios y legibilidad
+
+- Se usan comentarios solo cuando el código no se explica por sí mismo.
+- Los comentarios son breves y no obstructivos.
+- Se evitan comentarios largos que repitan lo que el código ya dice.
+- Excepción: para un flujo de ejecución complejo que el código no puede
+  proyectar por sí solo, se usan comentarios numerados (`1.`, `1.1.`, y
+  `2.2b.` para pasos insertados sin renumerar el resto) que marcan la
+  secuencia. Ahí el comentario SÍ es necesario, no es ruido. Cada archivo
+  numera su propio flujo desde 1; al dividir un archivo, se renumera por
+  archivo.
+- No se ponen comentarios de cabecera que expliquen el rol del archivo — el
+  nombre del archivo y su estructura ya lo dicen.
+- "Breve" se refiere a no repetir lo que el código dice, no al ancho de
+  línea. El único límite de tamaño es el de líneas por archivo (sección 2.3).
+
+## 6.3. Bloques de código
+
+- Se separan visualmente los datos (campos, propiedades, constructores) de
+  las funciones (métodos) mediante comentarios de bloque.
+- Si solo hay un bloque, se usa un comentario simple: "BLOQUE: Funciones".
+
+## 6.4. Estilo de código
+
+- Se prefiere el estilo compacto: if de una sola línea sin llaves, cuando no
+  se salga del ancho de pantalla.
+- Se evita la duplicación de código (DRY) siempre que no fuerce una
+  abstracción innecesaria.
+- Un valor literal se reemplaza por una constante con nombre SOLO cuando el
+  valor carga un significado de dominio (`BLOCK`, `MAX_INTENTOS`,
+  `SIN_SELECCION`). Los `0` y `1` en contexto convencional —índices,
+  conteos, inicialización, flags booleanos— NO son "valores mágicos" y no
+  necesitan nombre; nombrarlos (`ZERO`, `ONE`) agrega ruido. Referencia:
+  la regla no-magic-numbers de ESLint, en su config recomendada, ignora
+  `0`, `1` y `-1`; los linters de Rust no marcan números pequeños.
+
+## 6.5. Modelado de estados y flujo de control
+
+- Un estado o un flujo de error no se modela con cadenas de `if x == N` no
+  exhaustivas. Se usa un tipo con variantes nombradas (enum / unión
+  discriminada) y un switch/match que cubra todos los casos.
+- En lenguajes donde el compilador verifica la exhaustividad (Rust `match`,
+  C# con el análisis de patrones), esto vuelve imposible compilar si se
+  olvida una transición. Donde no la verifica, la regla se mantiene por
+  disciplina.
+- Origen: en un caso real, un estado modelado como `int fase` (0..3) sin
+  ningún código que devolviera `fase` a 0 dejó un componente
+  auto-desactivado de forma permanente. Un enum con `match` exhaustivo lo
+  habría hecho imposible de compilar sin cubrir el caso.
+
+# ================================================================================
+7. EXCEPCIONES CONTROLADAS (EL 20% MUTABLE)
+# ================================================================================
+
+## 7.1. El cascarón POO
+
+- Los módulos que interactúan con APIs externas mutables (UI, hardware, servicios)
+  pueden mantener estado mutable interno.
+- Esto incluye referencias a manejadores de ventanas, colas de eventos, conexiones.
+- Estos módulos representan el 20% del código total.
+- El orquestador NO llama a primitivas de plataforma (interop, P/Invoke, COM,
+  FFI, `unsafe`, syscalls) en su propio cuerpo. Ese código vive en los
+  componentes internos, que lo encapsulan y exponen una interfaz limpia:
+  funciones seguras, sin tipos de plataforma (handles, structs FFI) en la
+  firma. El orquestador solo coordina esas funciones.
+- La región de interop / el bloque `unsafe` / `unchecked` se acota a la
+  llamada concreta, no a la función entera.
+
+## 7.2. ¿Cuándo se permite?
+
+- Solo en los módulos de interfaz de usuario (UI) o de integración con librerías
+  que requieran estado mutable.
+- En los observadores que heredan de eventos y manejan callbacks asíncronos.
+- En helpers que encapsulan llamadas a sistemas externos (archivos, red, etc.).
+
+## 7.3. ¿Cuándo NO se permite?
+
+- En el motor funcional (80% del código): reglas de negocio, cálculos, validaciones.
+- En objetos de dominio (entidades, DTOs): deben ser inmutables.
+
+## 7.4. Uso controlado de objetos mutables externos
+
+Aunque el sistema evita depender de objetos mutables externos (parte del 20%),
+existen **casos legítimos** donde se permite su uso directo:
+
+- **`DataBuilder.CreateFrom(ExternalObject obj)`**: al construir entidades
+  desde fuentes externas, el objeto está vivo y sus propiedades son fiables
+  para construir el registro inmutable.
+- **`Observer.CheckForExistingEntities`**: durante la detección de entidades
+  en el sistema externo, se consultan propiedades comparándolas con la base
+  de datos inmutable.
+
+En cualquier otro contexto, debe consultarse la base de datos inmutable en
+lugar del objeto externo vivo.
+
+## 7.5. Flags mutuamente excluyentes en entidades
+
+Las entidades (inmutables en su mayoría, pero con estado de ciclo de vida)
+deben mantener consistencia entre sus flags. Las siguientes parejas nunca
+pueden ser `true` simultáneamente:
+
+- `IsDeleted` y `IsArchived`
+- `IsPending` y `IsConfirmed`
+- `IsLocked` y `IsAvailable`
+
+**Regla:** Al modificar un flag de estado, los métodos responsables deben
+revisar los flags relacionados y forzarlos a valores coherentes. Esta
+responsabilidad recae en los mini-orquestadores o componentes internos que
+modifican la base de datos.
+
+# ================================================================================
+8. EJEMPLO PRÁCTICO: ESTRUCTURA DE UNA APLICACIÓN MODULAR
+# ================================================================================
+
+MyApp/
+├── Core/                      ← Nivel 1 (Encapsulador)
+│   ├── Core.cs (orquestador público)
+│   ├── Data/                  ← Nivel 2 (Encapsulador)
+│   │   ├── Manager.cs (orquestador)
+│   │   ├── Readers/           ← Nivel 3 (Encapsulador)
+│   │   │   ├── Handler.cs (orquestador nivel 3)
+│   │   │   └── CsvReaderHandler.cs (mini-orquestador solo permitido a partir del nivel 3)
+│   │   ├── Writers/           ← Nivel 3 (Encapsulador)
+│   │   └── Validators.cs
+│   ├── Calculations/          ← Nivel 2 (Encapsulador)
+│   │   ├── Manager.cs (orquestador)
+│   │   ├── Formulas/          ← Nivel 3 (Encapsulador)
+│   │   │   ├── Handler.cs
+│   │   │   └── TaxHandler.cs
+│   │   └── Helpers.cs
+│   └── UI/                    ← Nivel 2 (Encapsulador)
+│       ├── Manager.cs (orquestador nivel 2)
+│       ├── Windows/           ← Nivel 3 (Encapsulador)
+│       ├── Buttons/           ← Nivel 2 (Encapsulador)
+│       ├── Build.cs (interno)
+│       └── Fill.cs (interno)
+└── Helpers/                   ← Helpers globales (public static)
+    ├── Timers.cs
+    ├── MathHelper.cs
+    └── StringHelper.cs
+
+# ================================================================================
+9. COMPARACIÓN CON OTROS PATRONES
+# ================================================================================
+
+| Patrón             | Tamaño archivos        | Encapsulamiento | Trazabilidad | Curva aprendizaje |
+| ------------------ | ---------------------- | --------------- | ------------ | ----------------- |
+| SOM                | Pequeños (120-125 max) | Alto            | Alta         | Baja              |
+| MVC                | Medianos (100-200)     | Medio           | Baja         | Media             |
+| Monolítico         | Grandes (300-500)      | Bajo            | Media        | Baja              |
+| Event-driven       | Pequeños               | Muy alto        | Muy baja     | Alta              |
+| Clean Architecture | Pequeños/medianos      | Muy alto        | Baja         | Muy alta          |
+
+# ================================================================================
+10. ORIGEN Y FILOSOFÍA
+# ================================================================================
+
+SOM nace de la adaptación del sistema de módulos de Rust a C#. En Rust, cada
+archivo es un módulo, todo es privado por defecto, y solo lo marcado con 'pub'
+es accesible desde fuera. Esa filosofía de "privado por defecto, público bajo
+demanda" se trasladó a C# usando 'internal' y 'public static class' como
+orquestadores.
+
+"Si Rust puede tener módulos limpios y encapsulados sin herencia ni interfaces
+innecesarias, C# también puede."
+
+**Nota:** SOM está concebido para trabajar en armonía con la programación funcional.
+Aunque permite un 20% de código mutable para interactuar con APIs externas,
+el 80% del motor de negocio (cálculos, validaciones, transformaciones de datos)
+debe ser puro e inmutable, favoreciendo funciones sin efectos secundarios,
+transparencia referencial y tipos como `Result<T>` o `Option<T>` cuando sea
+necesario. La arquitectura no impone un estilo funcional, pero su diseño de
+encapsulamiento y trazabilidad lineal lo hace especialmente compatible con él.
+
+**Nota sobre la implementación por lenguaje:** el encapsulamiento de SOM se
+apoya en el mecanismo de visibilidad de cada lenguaje, y en ambos casos lo
+impone el compilador (no depende de disciplina). En C# se logra con
+`internal` para los internos y una clase `public static` como orquestador.
+En Rust es nativo: cada archivo es un módulo, todo es privado por defecto,
+`mod x;` sella la frontera exterior y el archivo manifiesto expone con
+`pub use` solo el orquestador; `pub(super)` da el permiso mínimo para que
+los internos hermanos se llamen entre sí, sin filtrar nada hacia afuera.
+Detalle que cambia entre lenguajes: en Rust las constantes son tipadas —
+donde en C# un `const int ZERO = 0` sirve en varios contextos, en Rust hay
+que declarar una constante por cada tipo.
