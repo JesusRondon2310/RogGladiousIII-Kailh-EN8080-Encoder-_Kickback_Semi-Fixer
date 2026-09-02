@@ -58,6 +58,7 @@ Cada archivo tiene una sola responsabilidad. No hay archivos de 300 líneas que
 mezclen lógica de negocio, persistencia y UI.
 
 **Límite de líneas por archivo:**
+
 - **Recomendado:** 120 líneas.
 - **Máximo aceptable (aún SOM):** 125 líneas.
 - Por encima de 125 líneas, el archivo deja de ser SOM y debe refactorizarse
@@ -68,13 +69,43 @@ mezclen lógica de negocio, persistencia y UI.
   registrada como deuda técnica para futura refactorización.
 
 **Excepción para proyectos de gran escala:**
+
 En sistemas con un número elevado de módulos (ej. > 50) y equipos de desarrollo
 consolidados, el límite de 125 líneas puede resultar excesivamente restrictivo.
-En estos casos, el equipo puede acordar un límite superior (ej. 500 o 750 líneas)
-siempre que se mantenga el principio de "una responsabilidad por archivo" y
-la trazabilidad siga siendo clara. Esta ampliación debe documentarse en la
-guía de estilo del proyecto y revisarse periódicamente para evitar que el
-archivo se convierta en un "cajón desastre".
+En estos casos, el equipo puede acordar un límite superior, siempre que se
+mantenga el principio de "una responsabilidad por archivo" y la trazabilidad
+siga siendo clara. Esta ampliación debe documentarse en la guía de estilo del
+proyecto y revisarse periódicamente.
+
+**⚠️ ADVERTENCIA IMPORTANTE:**
+Los límites aquí definidos son **reglas de cumplimiento obligatorio**, no
+sugerencias. La ausencia de una restricción explícita en versiones anteriores
+no autoriza a ignorar estos límites. Cualquier archivo que supere los topes
+establecidos se considera una violación de SOM y debe ser corregido de
+inmediato. No se permite "probar a ver qué pasa" con archivos de 5000 líneas.
+
+Los límites sugeridos y topes máximos para proyectos de gran escala son:
+
+- **Rango sugerido (recomendado):** 500 - 750 líneas.
+  Este es el objetivo de tamaño para archivos en proyectos grandes. En este
+  rango, el archivo mantiene una trazabilidad clara y una única responsabilidad
+  sin resultar excesivamente fragmentado.
+
+- **Tope máximo permitido (sin deuda):** 1000 líneas.
+  No se debe superar este límite sin una razón documentada y revisada por el
+  equipo.
+
+- **Tope máximo con deuda técnica (refactorización obligatoria):** 1120 líneas.
+  Superar las 1000 líneas y llegar hasta 1120 líneas solo se admite como deuda
+  técnica documentada, y **debe planificarse su refactorización en el sprint
+  inmediato**. No se permite mantener archivos en este rango de forma indefinida.
+
+- La **cohesión no es un justificante válido** para superar las 1000 líneas.
+  Si un archivo alcanza este tamaño, es señal de que está mezclando
+  responsabilidades o que debe dividirse en submódulos o mini-orquestadores.
+
+- Los archivos que superen las 1120 líneas se consideran una violación grave
+  de SOM y deben refactorizarse antes de cualquier otra tarea.
 
 ## 2.4. Trazabilidad directa
 
@@ -91,9 +122,12 @@ Si un módulo necesita algo de otro, lo pide a través de su orquestador públic
 
 El orquestador principal (Core, Manager o Handler) **no debe contener lógica
 de detección de entrada** (eventos de teclado, ratón, etc.). Esa lógica debe
-delegarse en mini-orquestadores especializados (por ejemplo, InputHandler) o
-en componentes internos específicos. El orquestador solo invoca métodos de sus
-mini-orquestadores; nunca realiza comprobaciones de entrada directamente.
+delegarse en componentes internos especializados o, cuando la complejidad lo
+requiera, en mini-orquestadores (ver sección 4.2). Los mini-orquestadores
+solo pueden existir a partir del nivel 3 de profundidad; en niveles
+inferiores (1 y 2), la delegación se realiza mediante componentes internos
+simples. El orquestador invoca métodos de sus internos o mini-orquestadores;
+nunca realiza comprobaciones de entrada directamente.
 
 ## 2.7. Evolución por evidencia, no por especulación
 
@@ -151,16 +185,37 @@ específica (ItemValidator.cs, PriceCalculator.cs, etc.).
 
 ## 4.2. Mini-Orquestador
 
-- Contiene lógica de negocio específica.
-- Coordina otros componentes internos.
-- Depende del orquestador principal de su módulo.
-- Nomenclatura: NombreEspecificoHandler.cs (ej: PriceCalculatorHandler.cs).
-- **Visibilidad:** 
-  - Si solo es utilizado dentro de su propio módulo → `internal`.
-  - Si debe ser accedido desde otros módulos (por ejemplo, para ser invocado por
-    otro orquestador) → `public`. En este caso, el acceso sigue estando controlado
-    a través del orquestador principal del módulo, pero la visibilidad pública
-    permite la comunicación sin violar el encapsulamiento.
+Un mini-orquestador es un tipo especial de componente interno que **contiene
+lógica de negocio específica y delega** en otros componentes internos más
+pequeños (helpers, validadores, etc.). Su función es similar a la de un
+conserje en un hotel: tiene su propio "cubiculo" (archivo) donde guarda sus
+herramientas (funciones auxiliares) y sabe cómo realizar tareas concretas,
+pero solo actúa cuando el recepcionista (orquestador) se lo pide.
+
+**Restricción de nivel:**
+- Los mini-orquestadores **solo pueden existir a partir del nivel 3** de
+  profundidad (ej. `Nivel1/Nivel2/Nivel3/MiMiniOrquestador.cs`).
+- En los niveles 1 y 2 no se definen mini-orquestadores; toda la lógica de
+  delegación se maneja mediante componentes internos comunes.
+
+**Visibilidad:**
+- Los mini-orquestadores son **internos al módulo** (`internal` en C#,
+  privados por defecto en Rust, convención `_` en Python, minúscula en Go).
+- Son accesibles por **todos los archivos que pertenecen al mismo módulo**,
+  sin importar el nivel de profundidad en el que se encuentren (nivel 1, 2 o 3),
+  ya que todos comparten el mismo encapsulador.
+- **Un archivo que está fuera del módulo** (en otro módulo) **no puede acceder
+  directamente a un mini-orquestador**. La comunicación entre módulos siempre
+  debe pasar por el orquestador público del módulo destino, que es quien
+  decide si deriva la solicitud a un mini-orquestador interno.
+- En ningún caso un mini-orquestador se expone como `public` al exterior del
+  módulo. Siempre permanece dentro del encapsulador.
+
+**Nomenclatura:** `NombreEspecificoHandler.cs` (ej: `PriceCalculatorHandler.cs`,
+`InputHandler.cs`).
+
+**Dependencia:** Depende del orquestador principal de su módulo (Core, Manager
+o Handler) y puede coordinar otros componentes internos.
 
 ## 4.3. Componente interno
 
@@ -186,25 +241,58 @@ específica (ItemValidator.cs, PriceCalculator.cs, etc.).
 
 ## 5.2. Dependencias
 
-- El orquestador principal (nivel 1) depende de sus Managers (nivel 2).
-- El Manager (nivel 2) depende de sus Handlers (nivel 3) y mini-orquestadores.
-- El Handler (nivel 3) depende de sus mini-orquestadores y componentes internos.
-- Los componentes internos no dependen de orquestadores ni de otros módulos.
+- El orquestador principal (nivel 1: `Core`) depende de sus Managers (nivel 2)
+  y, en casos muy concretos, de componentes internos simples, pero **nunca**
+  de mini-orquestadores directamente.
+- El Manager (nivel 2) depende de sus Handlers (nivel 3) y de componentes
+  internos; tampoco depende directamente de mini-orquestadores.
+- El Handler (nivel 3) depende de sus mini-orquestadores (que son internos)
+  y de otros componentes internos.
+- Los mini-orquestadores son accesibles desde cualquier archivo del mismo
+  módulo, sin importar su nivel de profundidad. Esto incluye a los propios
+  orquestadores de nivel 1, 2 y 3, así como a otros mini-orquestadores y
+  componentes internos del mismo módulo.
+- Un archivo de otro módulo nunca puede acceder directamente a un mini-orquestador.
+  Siempre debe pasar por el orquestador público del módulo destino.
+
+En resumen, la cadena de delegación es:
+**Core → Manager → Handler → Mini-Orquestador → Internos**
 
 ## 5.3. Comunicación entre módulos
 
 - Un módulo solo accede al orquestador público de otro módulo.
-- Nunca accede directamente a sus internos.
+- Nunca accede directamente a sus internos (incluyendo mini-orquestadores).
 - Los componentes internos de un MISMO módulo se comunican entre sí sin
   restricción: comparten el mismo encapsulador.
 - El cruce ENTRE módulos siempre pasa por el orquestador del módulo destino,
-  que delega internamente en el componente correspondiente. Ni siquiera el
-  orquestador de otro módulo toca los internos ajenos directamente.
+  que delega internamente en el componente correspondiente (que puede ser un
+  mini-orquestador). Ni siquiera el orquestador de otro módulo toca los
+  internos ajenos directamente.
 
-Analogía: un hotel con varios pisos. El personal de un piso se pide cosas
-entre sí libremente. Si alguien necesita algo de otro piso, no sube y lo
-toma — habla con el recepcionista de ese piso (el orquestador), que manda a
-un conserje (un interno o mini-orquestador) a dárselo.
+**Analogía del hotel:**
+Imagina un hotel con varios pisos. Cada piso tiene un **recepcionista**
+(orquestador) que atiende a los huéspedes y visitantes. En ese piso hay
+**conserjes** (mini-orquestadores), cada uno con su propio cuarto de
+herramientas (archivo) donde guarda utensilios específicos. Los **inquilinos**
+(internos) son los que realizan las tareas más básicas.
+
+- El recepcionista recibe las peticiones de fuera (otros pisos o el exterior)
+  y decide a qué conserje encargarle el trabajo.
+- El conserje (mini-orquestador) tiene lógica de negocio específica: sabe
+  cómo hacer ciertas tareas y para ello utiliza sus herramientas (componentes
+  internos) y, si es necesario, pide ayuda a otros conserjes del mismo piso.
+- Los inquilinos (internos) realizan tareas concretas sin orquestar nada.
+- Si alguien de otro piso necesita algo, no sube directamente a tomar una
+  herramienta del cuarto del conserje; habla con el recepcionista de su piso,
+  quien se comunica con el recepcionista del piso destino, y este asigna a su
+  conserje adecuado.
+- **Los conserjes (mini-orquestadores) solo son conocidos por el personal
+  del mismo piso (módulo). El personal de otros pisos no sabe que existen,
+  y no puede acceder a ellos directamente.**
+
+**Regla de niveles:** los conserjes (mini-orquestadores) solo existen a
+partir del tercer piso (nivel 3). Los pisos 1 y 2 solo tienen recepcionistas
+y personal auxiliar (internos).
 
 # ================================================================================
 6. CONVENCIONES DE CÓDIGO COMO RECOMENDACIONES
@@ -404,10 +492,18 @@ representan las operaciones que el módulo ofrece al resto del sistema.
 - **Go:** Tipo exportado (mayúscula) con métodos exportados.
 
 ## Paso 3: Dividir la lógica interna en mini-orquestadores
-- Nivel 1: `Core` (orquestador principal).
-- Nivel 2: `Manager` (coordinador de funcionalidades).
-- Nivel 3: `Handler` (lógica específica).
-- Los mini-orquestadores pueden ser internos o públicos según la necesidad.
+
+- Nivel 1: `Core` (orquestador principal). Solo orquestador y componentes
+  internos básicos. No hay mini-orquestadores en este nivel.
+- Nivel 2: `Manager` (coordinador de funcionalidades). Solo orquestador y
+  componentes internos. Sigue sin haber mini-orquestadores.
+- Nivel 3: `Handler` (lógica específica). Aquí **ya se permiten** mini-orquestadores
+  (ej. `PriceCalculatorHandler`, `InputHandler`). Estos contienen lógica de
+  negocio y delegan en componentes internos.
+
+Los mini-orquestadores son **internos al módulo**: cualquier archivo dentro
+del mismo módulo puede usarlos, pero ningún archivo de otro módulo puede
+acceder a ellos directamente.
 
 ## Paso 4: Asegurar que cada archivo tenga una sola responsabilidad
 - Si un archivo supera el límite acordado (120 líneas por defecto), extrae
