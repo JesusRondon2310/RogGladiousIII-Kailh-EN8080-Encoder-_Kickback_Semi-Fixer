@@ -1,15 +1,16 @@
 ================================================================================
 wheel-fix (Kickback_Fix) - REGISTRO DE BUGS CORREGIDOS
 ================================================================================
-Última actualización: 2026-08-26
-Total de bugs: 5
+Última actualización: 2026-09-02
+Total de bugs: 6
 
 ================================================================================
 ÍNDICE POR SECCIONES
 ================================================================================
-1.  Compilación / bindings de Win32 (crate windows) ...... BUG 1,2
+1.  Compilación / bindings de Win32 (crate windows) ....... BUG 1,2
 2.  Lógica de detección de kickback ....................... BUG 3,4,5
-3.  Limitaciones conocidas (no resueltas al 100%) ......... LIMITACIÓN 1
+3.  Inyección de ticks sintéticos / hooks de bajo nivel ... BUG 6
+4.  Limitaciones conocidas (no resueltas al 100%) ......... LIMITACIÓN 1
 ================================================================================
 
 ================================================================================
@@ -26,6 +27,7 @@ SOLUCIÓN:
   Cambiar HHOOK(0) por HHOOK(std::ptr::null_mut()) — un puntero nulo
   explícito, que además es lo que Windows espera ahí realmente (ese
   parámetro es ignorado por el sistema en versiones modernas).
+  
 ARCHIVO: src/main.rs (dentro de hook_proc)
 ESTADO: RESUELTO
 
@@ -46,6 +48,7 @@ SOLUCIÓN:
   llamada:
     let hinstance: HINSTANCE = hmodule.into();
     let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), hinstance, 0)?;
+    
 ARCHIVO: src/main.rs (dentro de main)
 ESTADO: RESUELTO
 
@@ -70,8 +73,8 @@ SOLUCIÓN:
   candidato pendiente; solo se confirma (y pasa a ser la nueva dirección
   confirmada) si llega(n) suficiente(s) tick(s) adicional(es) en esa misma
   dirección nueva (ver BUG 4 y LIMITACIÓN 1 para la evolución de "cuántos").
-ARCHIVO: src/main.rs (hook_proc, variables CONFIRMED_DIR / PENDING_DIR /
-  PENDING_COUNT)
+  
+ARCHIVO: src/main.rs (hook_proc, variables CONFIRMED_DIR / PENDING_DIR / PENDING_COUNT)
 ESTADO: RESUELTO (mitigado; superseded por BUG 5 — ver más abajo)
 
 ================================================================================
@@ -97,8 +100,8 @@ SOLUCIÓN:
   un tick real que coincide con la dirección ya confirmada (CONFIRMED_DIR),
   nunca por el simple paso del tiempo. CONFIRM_WINDOW_MS quedó sin uso y se
   eliminó de las constantes.
-ARCHIVO: src/main.rs (hook_proc, eliminación de CONFIRM_WINDOW_MS y
-  pending_valid)
+  
+ARCHIVO: src/main.rs (hook_proc, eliminación de CONFIRM_WINDOW_MS y pending_valid)
 ESTADO: RESUELTO
 
 ================================================================================
@@ -138,10 +141,91 @@ RESULTADO:
   no se siente tanto. El problema residual que persiste corresponde a
   rachas de kickback más largas que REQUIRED_CONFIRMATIONS (ver
   LIMITACIÓN 1), no al defecto de este bug.
+  
 ARCHIVO: src/main.rs (hook_proc; se eliminaron CONFIRMED_DIR, PENDING_DIR,
   PENDING_COUNT, confirm_direction, start_candidate; se añadieron LAST_DIR,
   STREAK_COUNT, update_streak)
 ESTADO: RESUELTO
+
+================================================================================
+BUG 6 — SendInput dentro del callback del hook: deadlock del hilo de input
+================================================================================
+SÍNTOMA:
+  Una implementación de v2 que inyectaba ticks sintéticos con SendInput
+  desde DENTRO del callback del hook WH_MOUSE_LL congeló por completo el
+  input del sistema. El cursor seguía moviéndose, pero ningún clic, tecla
+  ni evento de rueda llegaba a las aplicaciones. Steam y el Administrador
+  de Tareas quedaron sin responder; requirió reinicio de la PC. La CPU se
+  mantuvo normal (no era un bucle de cómputo).
+  
+CAUSA:
+  El callback de un hook de bajo nivel corre en el hilo que instaló el
+  hook. SendInput mete el evento en la cola de hardware del sistema; el
+  Raw Input Thread lo saca y debe pasarlo por CADA hook de bajo nivel de
+  la cadena, esperando a que cada callback retorne antes de tocar el
+  estado de input. Nuestro callback estaba bloqueado DENTRO de SendInput
+  esperando ese procesamiento, y el Raw Input Thread esperaba a que
+  nuestro callback retornara. Espera circular: deadlock. Todo el input del
+  escritorio queda detenido detrás.
+
+  La causa que se documentó al principio ("la inyección nunca se detenía y
+  saturaba la cola de mensajes") era incorrecta: la CPU normal descarta un
+  bucle de cómputo — era un hilo bloqueado.
+  
+SOLUCIÓN:
+  La inyección NO puede ocurrir en el contexto del callback. Se movió a un
+  hilo inyector dedicado, comunicado por un canal (mpsc):
+    - el callback solo decide y envía la dirección por el canal, y retorna
+      de inmediato;
+    - el hilo inyector recibe del canal y llama a SendInput sin presión de
+      deadline;
+    - los eventos inyectados vuelven a entrar por el hook y se descartan
+      revisando el flag LLMHF_INJECTED de MSLLHOOKSTRUCT al inicio del
+      callback (si no, el hook se reprocesaría a sí mismo en bucle).
+      
+RESULTADO:
+  Con el hook activo y Armoury Crate corriendo normal, los ticks sintéticos
+  se inyectan en tiempo real, sin lag ni freeze. Mecanismo de inyección
+  validado hasta la tarea 4 del diseño v2.
+  
+ARCHIVO: src/detection/ (módulo, tras la modularización SOM):
+    - physical.rs  -> callback del hook, racha, decisión de inyectar
+    - synthetic.rs -> canal INJECTOR, hilo inyector, construcción de INPUT
+                      y SendInput
+    - core.rs      -> orquestador (instala hook, arranca inyector, bombeo
+                      de mensajes, salida limpia)
+                      
+ESTADO: RESUELTO (mecanismo de inyección; faltan las tareas 5-8 de la
+  lógica de compensación)
+
+NOTAS:
+  - SendInput dentro del callback es deadlock SIEMPRE. Ningún ajuste de
+    constantes lo salva; la inyección tiene que vivir fuera del hilo del
+    hook.
+
+  - Nuestros propios procesos zombie contaminaron el diagnóstico durante
+    días. Cada build que deadlockeaba dejaba un Kickback_Fix.exe colgado
+    con su hook WH_MOUSE_LL todavía registrado (Windows solo quita los
+    hooks al terminar el proceso, y estos no terminaban). Con ~11 zombies
+    acumulados, CUALQUIER SendInput —incluso desde la solución correcta
+    (hilo inyector), incluso con cero hooks nuestros— se colgaba esperando
+    a esos hooks muertos. Eso hizo parecer que el hilo inyector también
+    fallaba y llevó a la conclusión falsa de "SendInput no funciona en
+    este entorno / hay que cerrar Armoury Crate". Un logoff de Windows
+    mató los zombies y todo funcionó. Lección: matar todo proceso colgado
+    (taskkill /F /IM Kickback_Fix.exe, o cerrar sesión) ANTES de
+    diagnosticar; nunca dejar acumular builds deadlockeados.
+
+  - Desarrollar sin privilegios de administrador. Un proceso elevado
+    colgado no se puede matar desde una terminal normal y deja el .exe
+    bloqueado (hubo que recurrir a IOBit Unlocker).
+
+  - Salida limpia obligatoria: SetConsoleCtrlHandler -> PostThreadMessageW(
+    main_tid, WM_QUIT), para que Ctrl+C / cierre de ventana salgan por el
+    message loop, corran UnhookWindowsHookEx y liberen el .exe.
+
+  - SendInput puede fallar en silencio bajo UIPI, y devuelve 0 si "otro
+    hilo ya bloqueó el input" — conviene chequear el valor de retorno.
 
 ================================================================================
 LIMITACIÓN 1 — Rachas de kickback más largas que REQUIRED_CONFIRMATIONS
@@ -153,6 +237,7 @@ CONTEXTO:
   si el encoder genera una racha de fantasmas consecutivos en la misma
   dirección contraria más larga que N, esa racha completa se confirma como
   si fuera un cambio de dirección real.
+  
 EVIDENCIA:
   Se observaron rachas reales de tamaño variable en pruebas: 2, 3, 4 y al
   menos 6 ticks fantasma consecutivos. Con REQUIRED_CONFIRMATIONS = 3 (4
@@ -165,17 +250,20 @@ EVIDENCIA:
   que el kickback residual que persiste corresponde a rachas del encoder
   más largas que REQUIRED_CONFIRMATIONS (actualmente 6) — comportamiento
   esperado dado esta limitación, no un nuevo defecto del filtro.
+  
 POR QUÉ NO SE RESUELVE AL 100%:
   No existe un valor fijo de REQUIRED_CONFIRMATIONS que cubra toda racha
   posible sin volver el filtro perceptiblemente lento en cambios de
   dirección legítimos — es un trade-off entre precisión y responsividad,
   no un bug con una solución única.
+  
 MITIGACIÓN PLANEADA:
   Hacer REQUIRED_CONFIRMATIONS ajustable en tiempo real desde la GUI
   (rango 1-10), para que el usuario pueda subirlo si el patrón de kickback
   de su unidad empeora, sin necesidad de recompilar. A más largo plazo,
   el diseño v2 (detección anidada + compensación por inyección, ver
   Redesing.txt) apunta a resolver el trade-off de raíz.
+  
 ARCHIVO: src/main.rs (const REQUIRED_CONFIRMATIONS)
 ESTADO: NO RESUELTO (mitigación parcial vía número de confirmaciones;
   pendiente de exponer como control ajustable en la GUI, y evaluación de
