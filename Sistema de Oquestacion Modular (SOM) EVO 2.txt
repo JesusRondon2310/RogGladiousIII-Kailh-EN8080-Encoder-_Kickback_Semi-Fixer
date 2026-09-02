@@ -21,7 +21,9 @@ Documentación completa y actualizada (segunda edición)
 
 ================================================================================
 
-1. # ¿QUÉ ES SOM?
+# ================================================================================
+1. ¿QUÉ ES SOM?
+# ================================================================================
 
 SOM (Sistema de Orquestación Modular) es un patrón de encapsulamiento 
 especializado en gestión de errores determinista y trazabilidad (backtracing)
@@ -68,44 +70,28 @@ mezclen lógica de negocio, persistencia y UI.
   funcionalidad que no puede dividirse), se acepta temporalmente, pero queda
   registrada como deuda técnica para futura refactorización.
 
-**Excepción para proyectos de gran escala:**
+**Excepción controlada para proyectos grandes:**
 
-En sistemas con un número elevado de módulos (ej. > 50) y equipos de desarrollo
-consolidados, el límite de 125 líneas puede resultar excesivamente restrictivo.
-En estos casos, el equipo puede acordar un límite superior, siempre que se
-mantenga el principio de "una responsabilidad por archivo" y la trazabilidad
-siga siendo clara. Esta ampliación debe documentarse en la guía de estilo del
-proyecto y revisarse periódicamente.
+En proyectos grandes o masivos —donde SOM se combina con otro patrón de
+arquitectura (Hexagonal, MVC, Clean Architecture) y el número de módulos hace
+que el tope de 125 líneas sea una restricción molesta— el equipo puede acordar
+un límite superior. Esto rompe el principio 2.7 (no ampliar estructura por
+especulación) de forma deliberada y acotada; por eso la ampliación:
 
-**⚠️ ADVERTENCIA IMPORTANTE:**
-Los límites aquí definidos son **reglas de cumplimiento obligatorio**, no
-sugerencias. La ausencia de una restricción explícita en versiones anteriores
-no autoriza a ignorar estos límites. Cualquier archivo que supere los topes
-establecidos se considera una violación de SOM y debe ser corregido de
-inmediato. No se permite "probar a ver qué pasa" con archivos de 5000 líneas.
+- La decide el equipo de forma unánime y queda documentada en la guía de
+  estilo del proyecto.
+- Mantiene intacto el principio de "una responsabilidad por archivo" y la
+  trazabilidad lineal.
+- Se revisa periódicamente.
 
-Los límites sugeridos y topes máximos para proyectos de gran escala son:
+Límites para ese caso:
 
-- **Rango sugerido (recomendado):** 500 - 750 líneas.
-  Este es el objetivo de tamaño para archivos en proyectos grandes. En este
-  rango, el archivo mantiene una trazabilidad clara y una única responsabilidad
-  sin resultar excesivamente fragmentado.
-
-- **Tope máximo permitido (sin deuda):** 1000 líneas.
-  No se debe superar este límite sin una razón documentada y revisada por el
-  equipo.
-
-- **Tope máximo con deuda técnica (refactorización obligatoria):** 1120 líneas.
-  Superar las 1000 líneas y llegar hasta 1120 líneas solo se admite como deuda
-  técnica documentada, y **debe planificarse su refactorización en el sprint
-  inmediato**. No se permite mantener archivos en este rango de forma indefinida.
-
-- La **cohesión no es un justificante válido** para superar las 1000 líneas.
-  Si un archivo alcanza este tamaño, es señal de que está mezclando
-  responsabilidades o que debe dividirse en submódulos o mini-orquestadores.
-
-- Los archivos que superen las 1120 líneas se consideran una violación grave
-  de SOM y deben refactorizarse antes de cualquier otra tarea.
+- **Rango sugerido:** 120 - 300 líneas. Sigue siendo el objetivo por defecto.
+- **Tope máximo (sin deuda):** 500 líneas.
+- **Tope máximo con deuda técnica:** 550 líneas, con refactorización
+  planificada. No se mantienen archivos en este rango de forma indefinida.
+- La cohesión no justifica por sí sola superar las 500 líneas: suele indicar
+  que el archivo mezcla responsabilidades y debe dividirse.
 
 ## 2.4. Trazabilidad directa
 
@@ -143,11 +129,12 @@ SOM se apoya en el sistema de visibilidad de cada lenguaje. Los principios
 se aplican de forma consistente, pero la sintaxis y los mecanismos varían:
 
 - **C#:** `public` para el orquestador, `internal` para los internos.
-- **Rust:** Todo es privado por defecto; `pub` para el orquestador; `pub(super)` para visibilidad entre hermanos.
+- **Rust:** Todo es privado por defecto; `pub` para el orquestador; `pub(super)`
+  (visible hacia el módulo padre) para que los internos hermanos se llamen entre sí.
 - **Python:** Convención de `_` para privado; `__all__` en `__init__.py` para controlar la exportación.
 - **Go:** Tipo exportado (mayúscula) con métodos exportados; el resto minúscula (privado al paquete).
 
-La implementación concreta se detalla en la sección 13.
+La implementación concreta se detalla en la sección 11.
 
 # ================================================================================
 3. NIVELES DE PROFUNDIDAD Y NOMENCLATURA DE ARCHIVOS
@@ -168,6 +155,11 @@ Nivel 2: Manager.cs - Es el orquestador del submódulo de segundo nivel.
 Nivel 3: Handler.cs - Es el orquestador del submódulo de tercer nivel.
          Contiene la lógica de negocio específica y coordina componentes internos.
          Ejemplo: `Inventory/Transaction/Validation/Handler.cs`
+
+Estos niveles se añaden a medida que el módulo crece, no desde el inicio. Un
+módulo pequeño puede tener solo su orquestador (Core) y componentes internos,
+sin Manager ni Handler. La cadena Core → Manager → Handler no es un requisito
+de arranque: se instancia cuando la complejidad real lo pide (ver 2.7).
 
 Los archivos que no son orquestadores se nombran según su responsabilidad
 específica (ItemValidator.cs, PriceCalculator.cs, etc.).
@@ -295,8 +287,11 @@ partir del tercer piso (nivel 3). Los pisos 1 y 2 solo tienen recepcionistas
 y personal auxiliar (internos).
 
 # ================================================================================
-6. CONVENCIONES DE CÓDIGO COMO RECOMENDACIONES
+6. CONVENCIONES DE CÓDIGO
 # ================================================================================
+
+6.1 a 6.3 son recomendaciones de estilo. 6.4 y 6.5 son reglas: su
+incumplimiento ha causado bugs reales (ver el origen en 6.5).
 
 ## 6.1. Nombres de archivos y clases
 
@@ -436,7 +431,7 @@ MyApp/
 │   └── UI/                    ← Nivel 2 (Encapsulador)
 │       ├── Manager.cs (orquestador nivel 2)
 │       ├── Windows/           ← Nivel 3 (Encapsulador)
-│       ├── Buttons/           ← Nivel 2 (Encapsulador)
+│       ├── Buttons/           ← Nivel 3 (Encapsulador)
 │       ├── Build.cs (interno)
 │       └── Fill.cs (interno)
 └── Helpers/                   ← Helpers globales (public static)
@@ -530,10 +525,10 @@ acceder a ellos directamente.
 - SOM se encarga de la trazabilidad dentro de los casos de uso.
 
 # ================================================================================
-12. IMPLEMENTACIÓN DE SOM EN DIFERENTES LENGUAJES
+11. IMPLEMENTACIÓN DE SOM EN DIFERENTES LENGUAJES
 # ================================================================================
 
-## 12.1. C# ======================================================================
+## 11.1. C# ======================================================================
 
 - **Orquestador:** `public static class Core` o `public class Core` con métodos públicos.
 - **Internos:** `internal` (solo visibles dentro del ensamblado).
@@ -554,11 +549,14 @@ internal static class Helper {
     internal static void DoWork() { }
 }
 // Interno
+```
 
-## 12.2. Rust ====================================================================
+## 11.2. Rust ====================================================================
 
 - **Orquestador:** `pub fn` en `mod.rs` o `lib.rs`.
-- **Internos:** privados por defecto; `pub(super)` para visibilidad entre hermanos.
+- **Internos:** privados por defecto. `pub(super)` expone el ítem hacia el
+  módulo padre: es el permiso mínimo para que los internos hermanos se llamen
+  entre sí, sin filtrar nada hacia afuera.
 - **Exportación:** `pub use` en el archivo manifiesto.
 
 **Ejemplo:**
@@ -580,8 +578,9 @@ pub fn execute() {
 // internals.rs (privado, no exportado)
 pub(super) fn helper() { }
 // internals.rs
+```
 
-## 12.3. Python ==================================================================
+## 11.3. Python ==================================================================
 
 - **Orquestador:** Clase con métodos públicos.
 - **Internos:** Convención `_` (privado), no importar en `__all__`.
@@ -601,8 +600,9 @@ def _helper(): pass
 # __init__.py
 from .core import Core
 __all__ = ['Core']  # Solo se exporta el orquestador
+```
 
-## 12.4. Go ======================================================================
+## 11.4. Go ======================================================================
 
 - **Orquestador:** Tipo exportado (mayúscula) con métodos exportados.
 - **Internos:** Tipos y funciones con minúscula (privados al paquete).
@@ -622,8 +622,9 @@ func (c *Core) Execute() {
 
 // helper es privado (minúscula)
 func helper() {}
+```
 
-## 12.5. Nota sobre lenguajes dinámicos ========================================
+## 11.5. Nota sobre lenguajes dinámicos ========================================
 
 En lenguajes como Python o JavaScript, el encapsulamiento no es impuesto por el
 compilador, sino por convención y herramientas (linters, type checkers). SOM se
@@ -631,7 +632,7 @@ adapta a estas limitaciones usando convenciones de nomenclatura (ej. `_privado`)
 y configurando adecuadamente los sistemas de exportación de módulos.
 
 # ================================================================================
-13. ORIGEN Y FILOSOFÍA
+12. ORIGEN Y FILOSOFÍA
 # ================================================================================
 
 SOM nace de la adaptación del sistema de módulos de Rust a C#. En Rust, cada
