@@ -1,4 +1,4 @@
-//! detection/synthetic.rs
+//! filter/injector.rs
 
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicI32, Ordering};
@@ -8,44 +8,42 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_WHEEL, MOUSEINPUT, SendInput,
 };
 
-// Canal hacia el hilo inyector. physical solo pide encolar por aquí; nunca se llama a SendInput desde el hook: SendInput dentro
+use crate::helpers::constants::{DIAG_INJECTION_LIMIT, ONE_EVENT, WHEEL_DOWN, WHEEL_TICK_UNIT, WHEEL_UP};
+
+// Canal hacia el hilo inyector. detection solo pide encolar por aquí; nunca se llama a SendInput desde el hook: SendInput dentro
 // del callback bloquea el raw input thread contra sí mismo = deadlock (todos los eventos se quedan esperando).
 static INJECTOR: OnceLock<Sender<i32>> = OnceLock::new();
 
-// Inyecciones desde el último cambio de dirección de la racha. Lo reinicia physical vía reset().
+// Inyecciones desde el último cambio de dirección de la racha. Lo reinicia detection vía reset_injections_counter().
 static INJECTIONS_SINCE_RESET: AtomicI32 = AtomicI32::new(0);
 
-// Diagnóstico: tope de inyecciones por gesto. Al superarlo se deja de encolar y physical decide la salida limpia.
-const DIAG_INJECTION_LIMIT: i32 = 3;
-const WHEEL_TICK_UNIT: i32 = 120;
-
-// Resultado de pedir una inyección. physical actúa según la variante.
-pub(super) enum Enqueue {
+// Resultado de pedir una inyección. detection actúa según la variante.
+pub(super) enum EnqueueResult {
     Encolada(bool),
     Tope,
 }
 
 // 1. Cuenta y encola una inyección para el hilo inyector. Al llegar al tope diagnóstico devuelve Tope sin encolar.
-pub(super) fn enqueue(dir: i32) -> Enqueue {
-    let n = INJECTIONS_SINCE_RESET.load(Ordering::Relaxed);
-    if n >= DIAG_INJECTION_LIMIT {
-        println!("[STOP DIAGNÓSTICO] tope {DIAG_INJECTION_LIMIT} alcanzado, saliendo");
-        return Enqueue::Tope;
+pub(super) fn enqueue_manager(dir: i32) -> EnqueueResult {
+    let count = INJECTIONS_SINCE_RESET.load(Ordering::Relaxed);
+    if count >= DIAG_INJECTION_LIMIT {
+        println!("[STOP DIAGNÓSTICO] tope {DIAG_INJECTION_LIMIT} alcanzado");
+        return EnqueueResult::Tope;
     }
-    INJECTIONS_SINCE_RESET.store(n + 1, Ordering::Relaxed);
+    INJECTIONS_SINCE_RESET.store(count + 1, Ordering::Relaxed);
     match INJECTOR.get() {
-        Some(tx) => Enqueue::Encolada(tx.send(dir).is_ok()),
-        None => Enqueue::Encolada(false),
+        Some(tx) => EnqueueResult::Encolada(tx.send(dir).is_ok()),
+        None => EnqueueResult::Encolada(false),
     }
 }
 
-// 2. Reinicia el contador de inyecciones. physical lo llama al cambiar la dirección de la racha.
-pub(super) fn reset() { INJECTIONS_SINCE_RESET.store(0, Ordering::Relaxed); }
+// 2. Reinicia el contador de inyecciones. detection lo llama al cambiar la dirección de la racha.
+pub(super) fn reset_injections_counter() { INJECTIONS_SINCE_RESET.store(0, Ordering::Relaxed); }
 
 // 3. Construye e inyecta un tick de rueda sintético en `dir`. Corre siempre en el hilo inyector, nunca dentro del hook.
 // En vez de asertar, reporta el resultado de SendInput (sent + GetLastError) para diagnosticar.
-fn inject_synthetic_tick(dir: i32) {
-    debug_assert!(dir == 1 || dir == -1, "direccion de inyeccion invalida: {dir}");
+fn execute(dir: i32) {
+    debug_assert!(dir == WHEEL_UP || dir == WHEEL_DOWN, "direccion de inyeccion invalida: {dir}");
 
     let input = INPUT {
         r#type: INPUT_MOUSE,
@@ -62,7 +60,7 @@ fn inject_synthetic_tick(dir: i32) {
     };
 
     let sent = unsafe { SendInput(&[input], std::mem::size_of::<INPUT>() as i32) };
-    if sent == 1 {
+    if sent == ONE_EVENT {
         println!("[INYECTADO] dir={dir}");
         return;
     }
@@ -78,7 +76,7 @@ pub(super) fn start() {
         println!("[INYECTOR] hilo arrancado");
         while let Ok(dir) = rx.recv() {
             println!("[INYECTOR] recibido dir={dir}");
-            inject_synthetic_tick(dir);
+            execute(dir);
         }
         println!("[INYECTOR] canal cerrado, hilo termina");
     });

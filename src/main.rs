@@ -1,7 +1,8 @@
 //! main.rs
 
-mod detection;
+mod filter;
+mod helpers;
 
 fn main() -> windows::core::Result<()> {
-    detection::run()
+    filter::run()
 }
