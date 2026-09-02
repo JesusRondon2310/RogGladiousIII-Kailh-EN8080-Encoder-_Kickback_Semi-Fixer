@@ -15,10 +15,9 @@ Documentación completa y actualizada (segunda edición)
 7. Excepciones controladas (el 20% mutable)
 8. Ejemplo práctico: estructura de una aplicación modular
 9. Comparación y complementariedad con otros patrones
-10. Origen y filosofía
-11. (Reservado)
-12. Guía de aplicación de SOM (Multi-lenguaje)
-13. Implementación de SOM en diferentes lenguajes
+10. Guía de aplicación de SOM (Multi-lenguaje)
+11. Implementación de SOM en diferentes lenguajes
+12. Origen y filosofía
 
 ================================================================================
 
