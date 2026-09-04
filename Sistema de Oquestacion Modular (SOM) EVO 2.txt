@@ -102,7 +102,10 @@ dónde falló algo.
 ## 2.5. Independencia entre módulos
 
 Los módulos no se acoplan entre sí. Si un módulo falla, otro no se entera.
-Si un módulo necesita algo de otro, lo pide a través de su orquestador público.
+Si un módulo necesita algo de otro, lo pide a través de su orquestador
+público, o directamente a la función puntual `public` de un
+mini-orquestador ajeno cuando ese mini-orquestador la expuso para eso (ver
+4.2).
 
 ## 2.6. Delegación de entrada (UI / controladores)
 
@@ -129,8 +132,8 @@ SOM se apoya en el sistema de visibilidad de cada lenguaje. Los principios
 se aplican de forma consistente, pero la sintaxis y los mecanismos varían:
 
 - **C#:** `public` para el orquestador, `internal` para los internos.
-- **Rust:** Todo es privado por defecto; `pub` para el orquestador; `pub(super)`
-  (visible hacia el módulo padre) para que los internos hermanos se llamen entre sí.
+- **Rust:** Todo es privado por defecto; `pub` para el orquestador;
+  `pub(super)` para el resto (detalle en §11.2).
 - **Python:** Convención de `_` para privado; `__all__` en `__init__.py` para controlar la exportación.
 - **Go:** Tipo exportado (mayúscula) con métodos exportados; el resto minúscula (privado al paquete).
 
@@ -191,17 +194,29 @@ pero solo actúa cuando el recepcionista (orquestador) se lo pide.
   delegación se maneja mediante componentes internos comunes.
 
 **Visibilidad:**
-- Los mini-orquestadores son **internos al módulo** (`internal` en C#,
-  privados por defecto en Rust, convención `_` en Python, minúscula en Go).
+- La **clase** del mini-orquestador es siempre interna al módulo (`internal`
+  en C#, privado por defecto en Rust, convención `_` en Python, minúscula en
+  Go). La clase completa nunca se marca pública.
 - Son accesibles por **todos los archivos que pertenecen al mismo módulo**,
   sin importar el nivel de profundidad en el que se encuentren (nivel 1, 2 o 3),
   ya que todos comparten el mismo encapsulador.
-- **Un archivo que está fuera del módulo** (en otro módulo) **no puede acceder
-  directamente a un mini-orquestador**. La comunicación entre módulos siempre
-  debe pasar por el orquestador público del módulo destino, que es quien
-  decide si deriva la solicitud a un mini-orquestador interno.
-- En ningún caso un mini-orquestador se expone como `public` al exterior del
-  módulo. Siempre permanece dentro del encapsulador.
+- Si un archivo de **otro módulo** necesita una función puntual de un
+  mini-orquestador —situación real: SOM limita la profundidad a 3 niveles, y
+  el mini-orquestador es donde se mete lógica adicional sin poder subir de
+  nivel—, esa función concreta se marca `public` dentro de la clase interna.
+  El resto de la clase se queda `internal`. Nunca se abre la clase entera
+  para exponer una sola función; de ahí el nombre "mini-orquestador": solo
+  esa función puntual actúa como punto de entrada, igual que un orquestador,
+  pero a escala de una sola función.
+- **Matiz técnico:** en un proyecto de un solo ensamblado el compilador no
+  hace cumplir esta distinción — todo `internal` ya es visible en todo el
+  proyecto (ver la nota de C# en la sección de implementación por lenguaje),
+  así que ahí la frontera la sostiene el equipo, no el compilador. Se marca
+  igual porque (a) documenta cuál es la única puerta de entrada pensada
+  para otros módulos, y (b) si el módulo pasa a tener su propio ensamblado
+  (excepción de proyectos grandes, §2.3), ese `public` puntual se convierte
+  en una barrera real impuesta por el compilador sin tocar el resto del
+  código.
 
 **Nomenclatura:** `NombreEspecificoHandler.cs` (ej: `PriceCalculatorHandler.cs`,
 `InputHandler.cs`).
@@ -228,7 +243,7 @@ o Handler) y puede coordinar otros componentes internos.
 ## 5.1. Visibilidad
 
 - Orquestador principal: `public` (solo él es accesible desde fuera).
-- Mini-orquestadores: `internal` o `public` según la regla 4.2.
+- Mini-orquestadores: la clase siempre `internal`; funciones puntuales `public` según la regla 4.2.
 - Componentes internos: `internal` (salvo helpers de `Helpers/` que son `public static`).
 
 ## 5.2. Dependencias
@@ -240,26 +255,38 @@ o Handler) y puede coordinar otros componentes internos.
   internos; tampoco depende directamente de mini-orquestadores.
 - El Handler (nivel 3) depende de sus mini-orquestadores (que son internos)
   y de otros componentes internos.
-- Los mini-orquestadores son accesibles desde cualquier archivo del mismo
-  módulo, sin importar su nivel de profundidad. Esto incluye a los propios
-  orquestadores de nivel 1, 2 y 3, así como a otros mini-orquestadores y
-  componentes internos del mismo módulo.
-- Un archivo de otro módulo nunca puede acceder directamente a un mini-orquestador.
-  Siempre debe pasar por el orquestador público del módulo destino.
+- Accesibilidad dentro del módulo: ver 4.2. Entre mini-orquestadores del
+  mismo módulo pueden hablarse como pares (pedirse información,
+  coordinarse puntualmente), pero ninguno delega en otro ni lo orquesta —
+  esa sigue siendo función exclusiva del orquestador.
+- Un archivo de otro módulo nunca accede a un mini-orquestador **como clase
+  completa**. La vía por defecto sigue siendo pasar por el orquestador
+  público del módulo destino. La excepción es la función puntual que el
+  propio mini-orquestador marcó `public` (ver 4.2): esa función sí se llama
+  directo desde otro módulo. La diferencia de fondo entre ambos roles: el
+  orquestador delega y expone la lógica de **otros** (coordina); el
+  mini-orquestador delega y expone **su propia** lógica interna, bajo
+  demanda, por sí mismo — no necesita al orquestador para eso. El resto de
+  la clase sigue tan inaccesible como siempre.
 
 En resumen, la cadena de delegación es:
 **Core → Manager → Handler → Mini-Orquestador → Internos**
 
 ## 5.3. Comunicación entre módulos
 
-- Un módulo solo accede al orquestador público de otro módulo.
-- Nunca accede directamente a sus internos (incluyendo mini-orquestadores).
+- Un módulo accede al orquestador público de otro módulo, o —cuando el
+  mini-orquestador expuso una función puntual `public` (ver 4.2)— a esa
+  función directamente. Nunca accede al resto de los internos de otro
+  módulo.
 - Los componentes internos de un MISMO módulo se comunican entre sí sin
   restricción: comparten el mismo encapsulador.
-- El cruce ENTRE módulos siempre pasa por el orquestador del módulo destino,
-  que delega internamente en el componente correspondiente (que puede ser un
-  mini-orquestador). Ni siquiera el orquestador de otro módulo toca los
-  internos ajenos directamente.
+- El cruce ENTRE módulos pasa por el orquestador del módulo destino, que
+  delega internamente en sus propios componentes — nunca reexpone la lógica
+  de un mini-orquestador, porque el mini-orquestador ya se expone y se
+  delega a sí mismo. La excepción es la función puntual marcada `public` de
+  un mini-orquestador (4.2): el módulo llamador invoca esa función
+  específica directamente, sin pasar por el orquestador — el resto de la
+  clase sigue fuera de alcance.
 
 **Analogía del hotel:**
 Imagina un hotel con varios pisos. Cada piso tiene un **recepcionista**
@@ -269,18 +296,21 @@ herramientas (archivo) donde guarda utensilios específicos. Los **inquilinos**
 (internos) son los que realizan las tareas más básicas.
 
 - El recepcionista recibe las peticiones de fuera (otros pisos o el exterior)
-  y decide a qué conserje encargarle el trabajo.
+  y las resuelve con su propio personal (internos) — nunca reenvía el
+  trabajo a un conserje, porque el conserje ya atiende directo lo suyo.
 - El conserje (mini-orquestador) tiene lógica de negocio específica: sabe
-  cómo hacer ciertas tareas y para ello utiliza sus herramientas (componentes
-  internos) y, si es necesario, pide ayuda a otros conserjes del mismo piso.
+  cómo hacer ciertas tareas y para ello utiliza sus propias herramientas
+  (componentes internos).
 - Los inquilinos (internos) realizan tareas concretas sin orquestar nada.
-- Si alguien de otro piso necesita algo, no sube directamente a tomar una
-  herramienta del cuarto del conserje; habla con el recepcionista de su piso,
-  quien se comunica con el recepcionista del piso destino, y este asigna a su
-  conserje adecuado.
+- Por defecto, si alguien de otro piso necesita algo, no sube directamente
+  a tocar la puerta del conserje: habla con el recepcionista del piso
+  destino, quien resuelve con su propio personal. La excepción es cuando el
+  conserje anunció una tarea puntual que él mismo atiende — ahí sí puede
+  tocarle la puerta directo, sin pasar por ningún recepcionista.
 - **Los conserjes (mini-orquestadores) solo son conocidos por el personal
-  del mismo piso (módulo). El personal de otros pisos no sabe que existen,
-  y no puede acceder a ellos directamente.**
+  del mismo piso (módulo) — salvo que el propio conserje haya sido llamado
+  desde otro piso para una tarea puntual. Todo lo demás de su cuarto sigue
+  siendo invisible para fuera.**
 
 **Regla de niveles:** los conserjes (mini-orquestadores) solo existen a
 partir del tercer piso (nivel 3). Los pisos 1 y 2 solo tienen recepcionistas
@@ -531,9 +561,10 @@ representan las operaciones que el módulo ofrece al resto del sistema.
   (ej. `PriceCalculatorHandler`, `InputHandler`). Estos contienen lógica de
   negocio y delegan en componentes internos.
 
-Los mini-orquestadores son **internos al módulo**: cualquier archivo dentro
-del mismo módulo puede usarlos, pero ningún archivo de otro módulo puede
-acceder a ellos directamente.
+Los mini-orquestadores son **internos al módulo** como clase: cualquier
+archivo dentro del mismo módulo puede usarlos completos. Un archivo de otro
+módulo solo puede llegar a la función puntual que el mini-orquestador marcó
+`public` para eso (ver 4.2) — nunca al resto de la clase.
 
 ## Paso 4: Asegurar que cada archivo tenga una sola responsabilidad
 - Si un archivo supera el límite acordado (120 líneas por defecto), extrae
@@ -541,9 +572,7 @@ acceder a ellos directamente.
 - En proyectos grandes, se puede ampliar el límite (ver sección 2.3).
 
 ## Paso 5: Establecer las dependencias entre módulos
-- Un módulo SOLO accede al orquestador de otro módulo.
-- NUNCA accede directamente a sus internos.
-- Si un módulo necesita funcionalidad de otro, llama a su orquestador.
+- Aplica la independencia entre módulos (ver 2.5).
 
 ## Paso 6: Configurar el registro de contexto
 - Cada orquestador y mini-orquestador registra su entrada y salida con contexto.
@@ -593,6 +622,9 @@ internal static class Helper {
   módulo padre: es el permiso mínimo para que los internos hermanos se llamen
   entre sí, sin filtrar nada hacia afuera.
 - **Exportación:** `pub use` en el archivo manifiesto.
+- **Detalle que cambia frente a C#:** en Rust las constantes son tipadas —
+  donde en C# un `const int ZERO = 0` sirve en varios contextos, en Rust hay
+  que declarar una constante por cada tipo.
 
 **Ejemplo:**
 
@@ -689,17 +721,8 @@ modelar ausencia de valor. La arquitectura no impone un estilo funcional en
 lo demás, pero su diseño de
 encapsulamiento y trazabilidad lineal lo hace especialmente compatible con él.
 
-**Nota sobre la implementación por lenguaje:** el encapsulamiento de SOM se
-apoya en el mecanismo de visibilidad de cada lenguaje, y en ambos casos lo
-impone el compilador (no depende de disciplina). En C# se logra con
-`internal` para los internos y una clase `public static` como orquestador.
-En Rust es nativo: cada archivo es un módulo, todo es privado por defecto,
-`mod x;` sella la frontera exterior y el archivo manifiesto expone con
-`pub use` solo el orquestador; `pub(super)` da el permiso mínimo para que
-los internos hermanos se llamen entre sí, sin filtrar nada hacia afuera.
-Detalle que cambia entre lenguajes: en Rust las constantes son tipadas —
-donde en C# un `const int ZERO = 0` sirve en varios contextos, en Rust hay
-que declarar una constante por cada tipo.
+La implementación concreta del encapsulamiento por lenguaje está en §2.8 y
+§11 (Rust, C#, Python, Go).
 
 ================================================================================
 FIN DEL DOCUMENTO
