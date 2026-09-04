@@ -334,11 +334,11 @@ incumplimiento ha causado bugs reales (ver el origen en 6.5).
   la regla no-magic-numbers de ESLint, en su config recomendada, ignora
   `0`, `1` y `-1`; los linters de Rust no marcan números pequeños.
 
-## 6.5. Modelado de estados y flujo de control
+## 6.5. Modelado de estados
 
-- Un estado o un flujo de error no se modela con cadenas de `if x == N` no
-  exhaustivas. Se usa un tipo con variantes nombradas (enum / unión
-  discriminada) y un switch/match que cubra todos los casos.
+- Un estado no se modela con cadenas de `if x == N` no exhaustivas. Se usa
+  un tipo con variantes nombradas (enum / unión discriminada) y un
+  switch/match que cubra todos los casos.
 - En lenguajes donde el compilador verifica la exhaustividad (Rust `match`,
   C# con el análisis de patrones), esto vuelve imposible compilar si se
   olvida una transición. Donde no la verifica, la regla se mantiene por
@@ -347,6 +347,41 @@ incumplimiento ha causado bugs reales (ver el origen en 6.5).
   ningún código que devolviera `fase` a 0 dejó un componente
   auto-desactivado de forma permanente. Un enum con `match` exhaustivo lo
   habría hecho imposible de compilar sin cubrir el caso.
+
+## 6.6. Manejo de errores: Result Pattern
+
+- El mecanismo obligatorio para errores esperables (validación, I/O, parseo,
+  cualquier fallo que forme parte del flujo normal) es el **Result Pattern**:
+  la función devuelve explícitamente un tipo éxito-o-error (`Result<T, E>`,
+  unión discriminada, tupla `(valor, error)`) en vez de lanzar una excepción.
+- Las excepciones (`throw`/`try`/`catch` o equivalente) quedan reservadas
+  para lo verdaderamente excepcional: bugs internos, invariantes rotas,
+  fallos no recuperables. No se usan para flujo de control normal.
+- El switch/match exhaustivo de 6.5 no es la regla aquí, es su consecuencia:
+  el Result Pattern, por diseño, obliga a evaluar el caso de éxito y el de
+  error antes de continuar. No hay forma de "olvidar" el error sin que el
+  compilador (o el linter, según el lenguaje) se queje. La herramienta
+  (match/switch) sale de adoptar el patrón, no al revés.
+- Por lenguaje:
+  - **Rust:** nativo — `Result<T, E>`, propagación con `?`.
+  - **Go:** de facto ya es Result Pattern — retorno `(valor, error)`; el
+    `error` se evalúa siempre, nunca se descarta con `_`.
+  - **C#:** no es nativo — se implementa un tipo `Result<T>` propio (o se
+    adopta una librería como OneOf/LanguageExt). Las excepciones se
+    reservan para fallos no recuperables (`OutOfMemoryException` y
+    similares), no para validaciones de negocio.
+  - **Python:** se modela con una clase `Result`/`Either` propia (o
+    `Optional` con comprobación explícita) en vez de lanzar excepciones
+    para errores esperados.
+- Origen/razón: un error esperado que se propaga como excepción no
+  capturada rompe la trazabilidad lineal de SOM (ver 2.4) — el llamador no
+  sabe que la función puede fallar sin leer su implementación.
+- El 20% mutable (§7, cascarón POO) es donde sí se usan/capturan
+  excepciones: interop, UI, plataforma. Ahí es legítimo porque esas APIs
+  externas lanzan excepciones por diseño y no se controlan. La regla es la
+  frontera: el componente interno que envuelve esa API captura la excepción
+  y la traduce a `Result` antes de devolver el control al resto del módulo.
+  El 80% funcional nunca ve un `throw` cruzar hacia adentro.
 
 # ================================================================================
 7. EXCEPCIONES CONTROLADAS (EL 20% MUTABLE)
@@ -648,8 +683,10 @@ innecesarias, C# también puede."
 Aunque permite un 20% de código mutable para interactuar con APIs externas,
 el 80% del motor de negocio (cálculos, validaciones, transformaciones de datos)
 debe ser puro e inmutable, favoreciendo funciones sin efectos secundarios,
-transparencia referencial y tipos como `Result<T>` o `Option<T>` cuando sea
-necesario. La arquitectura no impone un estilo funcional, pero su diseño de
+transparencia referencial. El manejo de errores es obligatorio vía el Result
+Pattern (ver 6.6); `Option<T>` u otros tipos se usan cuando aplique para
+modelar ausencia de valor. La arquitectura no impone un estilo funcional en
+lo demás, pero su diseño de
 encapsulamiento y trazabilidad lineal lo hace especialmente compatible con él.
 
 **Nota sobre la implementación por lenguaje:** el encapsulamiento de SOM se
