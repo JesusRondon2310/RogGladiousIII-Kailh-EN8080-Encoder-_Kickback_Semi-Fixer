@@ -2,7 +2,7 @@
 
 ![ASUS ROG Gladius III](https://m.media-amazon.com/images/I/51MWi-ZraSL.jpg)
 
-Filtro de software en Rust para el problema conocido de **"wheel kickback"**
+Filtro de software en Go para el problema conocido de **"wheel kickback"**
 del [ASUS ROG Gladius III](https://www.amazon.es/ASUS-ROG-Gladius-III-intercambiables/dp/B096XKJK1V) (y otros ratones que usan el mismo encoder Kailh EN8080): al girar la
 rueda, el encoder a veces genera un tick fantasma en dirección contraria,
 causando que la página suba cuando en realidad scrolleaste hacia abajo
@@ -54,7 +54,7 @@ reunida durante las pruebas.
 ## Requisitos
 
 - Windows (usa la API Win32 directamente vía el crate `windows`)
-- Rust (instalación vía [rustup](https://rustup.rs))
+- Go (instalación vía [Go The Programming Language](https://go.dev))
 - Linker: MSVC (Visual Studio Build Tools) o GNU (MinGW-w64)
 
 ## Compilar

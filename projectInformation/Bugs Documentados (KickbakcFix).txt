@@ -27,7 +27,7 @@ SOLUCIÓN:
   Cambiar HHOOK(0) por HHOOK(std::ptr::null_mut()) — un puntero nulo
   explícito, que además es lo que Windows espera ahí realmente (ese
   parámetro es ignorado por el sistema en versiones modernas).
-  
+
 ARCHIVO: src/main.rs (dentro de hook_proc)
 ESTADO: RESUELTO
 
@@ -48,7 +48,7 @@ SOLUCIÓN:
   llamada:
     let hinstance: HINSTANCE = hmodule.into();
     let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(hook_proc), hinstance, 0)?;
-    
+
 ARCHIVO: src/main.rs (dentro de main)
 ESTADO: RESUELTO
 
@@ -73,7 +73,7 @@ SOLUCIÓN:
   candidato pendiente; solo se confirma (y pasa a ser la nueva dirección
   confirmada) si llega(n) suficiente(s) tick(s) adicional(es) en esa misma
   dirección nueva (ver BUG 4 y LIMITACIÓN 1 para la evolución de "cuántos").
-  
+
 ARCHIVO: src/main.rs (hook_proc, variables CONFIRMED_DIR / PENDING_DIR / PENDING_COUNT)
 ESTADO: RESUELTO (mitigado; superseded por BUG 5 — ver más abajo)
 
@@ -100,7 +100,7 @@ SOLUCIÓN:
   un tick real que coincide con la dirección ya confirmada (CONFIRMED_DIR),
   nunca por el simple paso del tiempo. CONFIRM_WINDOW_MS quedó sin uso y se
   eliminó de las constantes.
-  
+
 ARCHIVO: src/main.rs (hook_proc, eliminación de CONFIRM_WINDOW_MS y pending_valid)
 ESTADO: RESUELTO
 
@@ -141,7 +141,7 @@ RESULTADO:
   no se siente tanto. El problema residual que persiste corresponde a
   rachas de kickback más largas que REQUIRED_CONFIRMATIONS (ver
   LIMITACIÓN 1), no al defecto de este bug.
-  
+
 ARCHIVO: src/main.rs (hook_proc; se eliminaron CONFIRMED_DIR, PENDING_DIR,
   PENDING_COUNT, confirm_direction, start_candidate; se añadieron LAST_DIR,
   STREAK_COUNT, update_streak)
@@ -157,7 +157,7 @@ SÍNTOMA:
   ni evento de rueda llegaba a las aplicaciones. Steam y el Administrador
   de Tareas quedaron sin responder; requirió reinicio de la PC. La CPU se
   mantuvo normal (no era un bucle de cómputo).
-  
+
 CAUSA:
   El callback de un hook de bajo nivel corre en el hilo que instaló el
   hook. SendInput mete el evento en la cola de hardware del sistema; el
@@ -171,7 +171,7 @@ CAUSA:
   La causa que se documentó al principio ("la inyección nunca se detenía y
   saturaba la cola de mensajes") era incorrecta: la CPU normal descarta un
   bucle de cómputo — era un hilo bloqueado.
-  
+
 SOLUCIÓN:
   La inyección NO puede ocurrir en el contexto del callback. Se movió a un
   hilo inyector dedicado, comunicado por un canal (mpsc):
@@ -182,19 +182,19 @@ SOLUCIÓN:
     - los eventos inyectados vuelven a entrar por el hook y se descartan
       revisando el flag LLMHF_INJECTED de MSLLHOOKSTRUCT al inicio del
       callback (si no, el hook se reprocesaría a sí mismo en bucle).
-      
+
 RESULTADO:
   Con el hook activo y Armoury Crate corriendo normal, los ticks sintéticos
   se inyectan en tiempo real, sin lag ni freeze. Mecanismo de inyección
   validado hasta la tarea 4 del diseño v2.
-  
+
 ARCHIVO: src/detection/ (módulo, tras la modularización SOM):
-    - physical.rs  -> callback del hook, racha, decisión de inyectar
-    - synthetic.rs -> canal INJECTOR, hilo inyector, construcción de INPUT
+    - detection.rs  -> callback del hook, racha, decisión de inyectar
+    - injector.rs -> canal INJECTOR, hilo inyector, construcción de INPUT
                       y SendInput
     - core.rs      -> orquestador (instala hook, arranca inyector, bombeo
                       de mensajes, salida limpia)
-                      
+
 ESTADO: RESUELTO (mecanismo de inyección; faltan las tareas 5-8 de la
   lógica de compensación)
 
@@ -228,6 +228,9 @@ NOTAS:
     hilo ya bloqueó el input" — conviene chequear el valor de retorno.
 
 ================================================================================
+A partir de aqui, bugs de Golang.
+
+================================================================================
 LIMITACIÓN 1 — Rachas de kickback más largas que REQUIRED_CONFIRMATIONS
   se cuelan igual
 ================================================================================
@@ -237,7 +240,7 @@ CONTEXTO:
   si el encoder genera una racha de fantasmas consecutivos en la misma
   dirección contraria más larga que N, esa racha completa se confirma como
   si fuera un cambio de dirección real.
-  
+
 EVIDENCIA:
   Se observaron rachas reales de tamaño variable en pruebas: 2, 3, 4 y al
   menos 6 ticks fantasma consecutivos. Con REQUIRED_CONFIRMATIONS = 3 (4
@@ -250,20 +253,20 @@ EVIDENCIA:
   que el kickback residual que persiste corresponde a rachas del encoder
   más largas que REQUIRED_CONFIRMATIONS (actualmente 6) — comportamiento
   esperado dado esta limitación, no un nuevo defecto del filtro.
-  
+
 POR QUÉ NO SE RESUELVE AL 100%:
   No existe un valor fijo de REQUIRED_CONFIRMATIONS que cubra toda racha
   posible sin volver el filtro perceptiblemente lento en cambios de
   dirección legítimos — es un trade-off entre precisión y responsividad,
   no un bug con una solución única.
-  
+
 MITIGACIÓN PLANEADA:
   Hacer REQUIRED_CONFIRMATIONS ajustable en tiempo real desde la GUI
   (rango 1-10), para que el usuario pueda subirlo si el patrón de kickback
   de su unidad empeora, sin necesidad de recompilar. A más largo plazo,
   el diseño v2 (detección anidada + compensación por inyección, ver
   Redesing.txt) apunta a resolver el trade-off de raíz.
-  
+
 ARCHIVO: src/main.rs (const REQUIRED_CONFIRMATIONS)
 ESTADO: NO RESUELTO (mitigación parcial vía número de confirmaciones;
   pendiente de exponer como control ajustable en la GUI, y evaluación de
