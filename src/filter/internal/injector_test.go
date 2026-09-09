@@ -23,14 +23,14 @@ func resetInjectorState() {
 	}
 }
 
-// TestInputLayout: si el struct que va a SendInput no mide lo que Win32 espera, le mandamos basura y el layout está mal. Los
+// TestMouseInputEventLayout: si el struct que va a SendInput no mide lo que Win32 espera, le mandamos basura y el layout está mal. Los
 // tamaños (32 y 40 en x64) salen de la doc de MOUSEINPUT e INPUT.
-func TestInputLayout(t *testing.T) {
+func TestMouseInputEventLayout(t *testing.T) {
 	if got := unsafe.Sizeof(mouseInput{}); got != 32 {
 		t.Errorf("mouseInput = %d bytes, quiero 32", got)
 	}
-	if got := unsafe.Sizeof(input{}); got != 40 {
-		t.Errorf("input = %d bytes, quiero 40", got)
+	if got := unsafe.Sizeof(mouseInputEvent{}); got != 40 {
+		t.Errorf("mouseInputEvent = %d bytes, quiero 40", got)
 	}
 }
 
@@ -50,11 +50,11 @@ func TestBuildInput(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			got := buildInput(c.direction)
 
-			if got.inputType != helpers.INPUT_MOUSE {
-				t.Errorf("inputType = %d, quiero %d", got.inputType, helpers.INPUT_MOUSE)
+			if got.inputType != helpers.MOUSE_INPUT {
+				t.Errorf("inputType = %d, quiero %d", got.inputType, helpers.MOUSE_INPUT)
 			}
-			if got.mi.dwFlags != helpers.MOUSEEVENTF_WHEEL {
-				t.Errorf("dwFlags = %#x, quiero %#x", got.mi.dwFlags, helpers.MOUSEEVENTF_WHEEL)
+			if got.mi.dwFlags != helpers.WHEEL_MOVE {
+				t.Errorf("dwFlags = %#x, quiero %#x", got.mi.dwFlags, helpers.WHEEL_MOVE)
 			}
 			if got.mi.mouseData != c.wantMouseData {
 				t.Errorf("mouseData = %#x, quiero %#x", got.mi.mouseData, c.wantMouseData)

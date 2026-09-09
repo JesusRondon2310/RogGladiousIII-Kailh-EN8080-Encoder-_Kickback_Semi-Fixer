@@ -3,24 +3,24 @@ package filter
 import (
 	"fmt"
 	"sync/atomic"
-	"syscall"
 	"unsafe"
 
 	"Kickback_Fix/src/helpers"
+	"golang.org/x/sys/windows"
 )
 
-var kernel32 = syscall.NewLazyDLL("kernel32.dll")
+var kernel32 = windows.NewLazySystemDLL("kernel32.dll")
 var procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
 var procSetWindowsHookExW = user32.NewProc("SetWindowsHookExW")
 var procCallNextHookEx = user32.NewProc("CallNextHookEx")
 var procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 
 // NewCallback asigna un trampolín C->Go y hay un tope global: se crea UNA sola vez.
-var hookCallback = syscall.NewCallback(mouseWheelCatcherHook)
+var mouseHookCallback = windows.NewCallback(mouseWheelCatcherHook)
 
-// onDiagnosticCap lo setea StartHook. Windows llama al mouseWheelCatcherHook sin contexto: la única vía de avisarle al orquestador
+// onInjectionCapReached lo setea StartHook. Windows llama al mouseWheelCatcherHook sin contexto: la única vía de avisarle al orquestador
 // "se llegó al tope diagnóstico" es una variable de paquete.
-var onDiagnosticCap func()
+var onInjectionCapReached func()
 
 var lastDir atomic.Int32
 var streakCount atomic.Int32
@@ -66,13 +66,13 @@ func updateStreak(direction int32) int32 {
 // durante la llamada.
 func mouseWheelCatcherHook(nCode, wParam uintptr, lParam unsafe.Pointer) uintptr {
 	// 2.1. Solo eventos de rueda; el resto pasa directo. nCode llega como uintptr: se lee con signo.
-	if int32(nCode) < 0 || uint32(wParam) != helpers.WM_MOUSEWHEEL {
+	if int32(nCode) < 0 || uint32(wParam) != helpers.WHEEL_EVENT {
 		return passThrough(nCode, wParam, uintptr(lParam))
 	}
 	event := (*msllHookStruct)(lParam)
 
 	// 2.2. Un evento inyectado por nosotros pasa sin re-procesar, o el hook se dispara a sí mismo en bucle.
-	if event.flags&helpers.LLMHF_INJECTED != 0 {
+	if event.flags&helpers.SELF_INJECTED != 0 {
 		return passThrough(nCode, wParam, uintptr(lParam))
 	}
 
@@ -89,26 +89,26 @@ func mouseWheelCatcherHook(nCode, wParam uintptr, lParam unsafe.Pointer) uintptr
 	// 2.5. Umbral alcanzado: bloquea el físico y pide a injector un sintético.
 	result := enqueueManager(direction)
 	fmt.Printf("[VIGILANCIA] dir=%d streak=%d encolada=%t\n", direction, streak, result == enqueued)
-	if result == atCap && onDiagnosticCap != nil {
-		onDiagnosticCap()
+	if result == atCap && onInjectionCapReached != nil {
+		onInjectionCapReached()
 	}
 	return helpers.BLOCK
 }
 
 // 3. Arranca la detección apuntando a mouseWheelCatcherHook. Devuelve el handle para pararlo. onCap se invoca al llegar al tope.
-func StartHook(onCap func()) (uintptr, error) {
-	onDiagnosticCap = onCap
+func StartHook(onCap func()) (windows.Handle, error) {
+	onInjectionCapReached = onCap
 	hmod, _, _ := procGetModuleHandleW.Call(0)
-	hook, _, err := procSetWindowsHookExW.Call(uintptr(helpers.WH_MOUSE_LL), hookCallback, hmod, 0)
+	hook, _, err := procSetWindowsHookExW.Call(uintptr(helpers.MOUSE_HOOK), mouseHookCallback, hmod, 0)
 	if hook == 0 {
 		return 0, err
 	}
-	return hook, nil
+	return windows.Handle(hook), nil
 }
 
 // 4. Para la detección.
-func StopHook(hook uintptr) error {
-	if ret, _, err := procUnhookWindowsHookEx.Call(hook); ret == 0 {
+func StopHook(hook windows.Handle) error {
+	if ret, _, err := procUnhookWindowsHookEx.Call(uintptr(hook)); ret == 0 {
 		return err
 	}
 	return nil

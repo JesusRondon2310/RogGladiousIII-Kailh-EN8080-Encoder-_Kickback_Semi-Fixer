@@ -16,7 +16,7 @@ func resetDetectionState() {
 	lastDir.Store(0)
 	streakCount.Store(0)
 	resetInjectorState()
-	onDiagnosticCap = nil
+	onInjectionCapReached = nil
 }
 
 // wheelEvent arma un MSLLHOOKSTRUCT como el que entrega Windows: dirección en el HIWORD de mouseData.
@@ -24,7 +24,7 @@ func wheelEvent(direction int32, injected bool) msllHookStruct {
 	var ev msllHookStruct
 	ev.mouseData = uint32(direction*helpers.WHEEL_TICK_UNIT) << 16
 	if injected {
-		ev.flags = helpers.LLMHF_INJECTED
+		ev.flags = helpers.SELF_INJECTED
 	}
 	return ev
 }
@@ -98,7 +98,7 @@ func TestMouseWheelCatcherHook(t *testing.T) {
 		passThrough = func(_, _, _ uintptr) uintptr { passed = true; return 0 }
 
 		ev := wheelEvent(helpers.WHEEL_UP, true)
-		mouseWheelCatcherHook(0, uintptr(helpers.WM_MOUSEWHEEL), unsafe.Pointer(&ev))
+		mouseWheelCatcherHook(0, uintptr(helpers.WHEEL_EVENT), unsafe.Pointer(&ev))
 
 		if !passed {
 			t.Error("no llamó a passThrough")
@@ -130,7 +130,7 @@ func TestMouseWheelCatcherHook(t *testing.T) {
 		passThrough = func(_, _, _ uintptr) uintptr { return 99 }
 
 		ev := wheelEvent(helpers.WHEEL_DOWN, false)
-		ret := mouseWheelCatcherHook(0, uintptr(helpers.WM_MOUSEWHEEL), unsafe.Pointer(&ev))
+		ret := mouseWheelCatcherHook(0, uintptr(helpers.WHEEL_EVENT), unsafe.Pointer(&ev))
 
 		if ret != helpers.BLOCK {
 			t.Errorf("ret = %d, quiero BLOCK (%d)", ret, helpers.BLOCK)
@@ -140,21 +140,21 @@ func TestMouseWheelCatcherHook(t *testing.T) {
 		}
 	})
 
-	t.Run("al llegar al tope diagnóstico dispara onDiagnosticCap", func(t *testing.T) {
+	t.Run("al llegar al tope diagnóstico dispara onInjectionCapReached", func(t *testing.T) {
 		resetDetectionState()
 		passThrough = func(_, _, _ uintptr) uintptr { return 0 }
 		var fired bool
-		onDiagnosticCap = func() { fired = true }
+		onInjectionCapReached = func() { fired = true }
 
 		// vigilancia arranca en WATCH_THRESHOLD; el tope corta tras DIAG_INJECTION_LIMIT inyecciones.
 		total := helpers.WATCH_THRESHOLD + helpers.DIAG_INJECTION_LIMIT + 1
 		ev := wheelEvent(helpers.WHEEL_UP, false)
 		for i := int32(0); i < total; i++ {
-			mouseWheelCatcherHook(0, uintptr(helpers.WM_MOUSEWHEEL), unsafe.Pointer(&ev))
+			mouseWheelCatcherHook(0, uintptr(helpers.WHEEL_EVENT), unsafe.Pointer(&ev))
 		}
 
 		if !fired {
-			t.Error("no se disparó onDiagnosticCap al llegar al tope")
+			t.Error("no se disparó onInjectionCapReached al llegar al tope")
 		}
 	})
 }

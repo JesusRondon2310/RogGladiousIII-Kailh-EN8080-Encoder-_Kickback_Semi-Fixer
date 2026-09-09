@@ -3,16 +3,16 @@ package filter
 import (
 	"fmt"
 	"sync/atomic"
-	"syscall"
 	"unsafe"
 
+	"Kickback_Fix/src/exception"
 	inner "Kickback_Fix/src/filter/internal"
 	"Kickback_Fix/src/helpers"
+	"golang.org/x/sys/windows"
 )
 
-var kernel32 = syscall.NewLazyDLL("kernel32.dll")
-var user32 = syscall.NewLazyDLL("user32.dll")
-var procGetCurrentThreadId = kernel32.NewProc("GetCurrentThreadId")
+var kernel32 = windows.NewLazySystemDLL("kernel32.dll")
+var user32 = windows.NewLazySystemDLL("user32.dll")
 var procSetConsoleCtrlHandler = kernel32.NewProc("SetConsoleCtrlHandler")
 var procPostThreadMessageW = user32.NewProc("PostThreadMessageW")
 var procGetMessageW = user32.NewProc("GetMessageW")
@@ -20,7 +20,7 @@ var procTranslateMessage = user32.NewProc("TranslateMessage")
 var procDispatchMessageW = user32.NewProc("DispatchMessageW")
 
 // NewCallback asigna un trampolín C->Go: se crea UNA sola vez.
-var ctrlHandlerCallback = syscall.NewCallback(consoleCtrlHandler)
+var ctrlHandlerCallback = windows.NewCallback(consoleCtrlHandler)
 var mainThreadID atomic.Uint32
 
 type msg struct {
@@ -34,25 +34,23 @@ type msg struct {
 }
 
 // 1. Arranca injector y detección, corre el bombeo de mensajes hasta un cierre, y limpia.
-func Run() error {
-	// 1.1. Registra este hilo como destino del WM_QUIT y engancha el handler de cierre.
-	tid, _, _ := procGetCurrentThreadId.Call()
-	mainThreadID.Store(uint32(tid))
-	if r, _, err := procSetConsoleCtrlHandler.Call(ctrlHandlerCallback, 1); r == 0 {
-		return err
+func Run() (err error) {
+	defer exception.Catch(&err)
+
+	// 1.1. Este hilo recibe el mensaje de salida; engancha el handler de cierre.
+	mainThreadID.Store(windows.GetCurrentThreadId())
+	if r, _, e := procSetConsoleCtrlHandler.Call(ctrlHandlerCallback, 1); r == 0 {
+		return e
 	}
 
 	// 1.2. Arranca el hilo inyector antes de la detección.
 	inner.StartInjector()
 
 	// 1.3. Arranca la detección de ticks: requestQuit va como callback de tope.
-	hook, err := inner.StartHook(requestQuit)
-	if err != nil {
-		return err
-	}
+	hook := exception.Try(inner.StartHook(requestQuit))
 	fmt.Println("Filtro activo (v2 hasta tarea 4). Ctrl+C para salir.")
 
-	// 1.4. Bombeo de mensajes: sin esto el hook deja de recibir eventos. GetMessageW devuelve 0 en WM_QUIT, -1 en error.
+	// 1.4. Bombeo de mensajes: sin esto el hook deja de recibir eventos. GetMessageW devuelve 0 en QUIT_MESSAGE, -1 en error.
 	var m msg
 	for {
 		if r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0); int32(r) <= 0 {
@@ -63,17 +61,15 @@ func Run() error {
 	}
 
 	// 1.5. Al salir, para la detección limpiamente.
-	if err := inner.StopHook(hook); err != nil {
-		return err
-	}
+	exception.TryWithErrorReturnFunc(inner.StopHook(hook))
 	fmt.Println("Hook desinstalado. Saliendo.")
-	return nil
+	return
 }
 
-// 2. Postea WM_QUIT al hilo del bombeo para que salga. detection lo recibe como onCap al llegar al tope diagnóstico. Es var para
-// que los tests del ctrl handler lo sustituyan.
+// 2. Postea el mensaje de salida al hilo del bombeo. detection lo recibe como onCap al llegar al tope. Es var para que los
+// tests del ctrl handler lo sustituyan.
 var requestQuit = func() {
-	procPostThreadMessageW.Call(uintptr(mainThreadID.Load()), uintptr(helpers.WM_QUIT), 0, 0)
+	procPostThreadMessageW.Call(uintptr(mainThreadID.Load()), uintptr(helpers.QUIT_MESSAGE), 0, 0)
 }
 
 // 3. Windows lo llama en Ctrl+C / cierre de ventana. ctrlType llega como uintptr.

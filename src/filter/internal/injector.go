@@ -4,17 +4,17 @@ import (
 	"fmt"
 	"runtime"
 	"sync/atomic"
-	"syscall"
 	"unsafe"
 
 	"Kickback_Fix/src/helpers"
+	"golang.org/x/sys/windows"
 )
 
 // injectorCh lleva las direcciones a inyectar desde el hook hasta la goroutine inyectora. El hook nunca llama a SendInput directamente:
 // hacerlo dentro del callback bloquea el raw input thread contra sí mismo = deadlock.
 var injectorCh = make(chan int32, 16)
 var injectionsSinceReset atomic.Int32
-var user32 = syscall.NewLazyDLL("user32.dll")
+var user32 = windows.NewLazySystemDLL("user32.dll")
 var procSendInput = user32.NewProc("SendInput")
 
 type mouseInput struct {
@@ -26,7 +26,7 @@ type mouseInput struct {
 	dwExtraInfo uintptr
 }
 
-type input struct {
+type mouseInputEvent struct {
 	inputType uint32
 	mi        mouseInput
 }
@@ -60,13 +60,13 @@ func resetInjectionsCounter() {
 	injectionsSinceReset.Store(0)
 }
 
-// testeable sin tocar SendInput.
-func buildInput(direction int32) input {
-	return input{
-		inputType: helpers.INPUT_MOUSE,
+// buildInput arma el evento de rueda para `direction`. Puro: sin efectos, testeable sin tocar SendInput.
+func buildInput(direction int32) mouseInputEvent {
+	return mouseInputEvent{
+		inputType: helpers.MOUSE_INPUT,
 		mi: mouseInput{
 			mouseData: uint32(direction * helpers.WHEEL_TICK_UNIT),
-			dwFlags:   helpers.MOUSEEVENTF_WHEEL,
+			dwFlags:   helpers.WHEEL_MOVE,
 		},
 	}
 }
