@@ -1,7 +1,7 @@
 package filter
 
-// Tests de la lógica de injector. El SendInput real y el ciclo de vida de la goroutine (injectorLoop / Start) necesitan el hook
-// corriendo — van en un test de integración aparte, no acá.
+// Tests de la lógica de injector. El SendInput real y el ciclo de vida de la goroutine (injectorLoop / StartInjector) necesitan
+// el hook corriendo — van en un test de integración aparte, no acá.
 
 import (
 	"testing"
@@ -10,10 +10,8 @@ import (
 	"Kickback_Fix/src/helpers"
 )
 
-// resetInjectorState deja el estado de paquete en cero: contador a 0 y canal vacío. Los tests tocan globales, así que corren en serie
-// y arrancan cada uno con esto.
+// resetInjectorState vacía el canal. Los tests tocan globales, así que corren en serie y arrancan cada uno con esto.
 func resetInjectorState() {
-	resetInjectionsCounter()
 	for {
 		select {
 		case <-injectorCh:
@@ -23,8 +21,8 @@ func resetInjectorState() {
 	}
 }
 
-// TestMouseInputEventLayout: si el struct que va a SendInput no mide lo que Win32 espera, le mandamos basura y el layout está mal. Los
-// tamaños (32 y 40 en x64) salen de la doc de MOUSEINPUT e INPUT.
+// TestMouseInputEventLayout: si el struct que va a SendInput no mide lo que Win32 espera, le mandamos basura y el layout está mal.
+// Los tamaños (32 y 40 en x64) salen de la doc de MOUSEINPUT e INPUT.
 func TestMouseInputEventLayout(t *testing.T) {
 	if got := unsafe.Sizeof(mouseInput{}); got != 32 {
 		t.Errorf("mouseInput = %d bytes, quiero 32", got)
@@ -63,52 +61,27 @@ func TestBuildInput(t *testing.T) {
 	}
 }
 
-// TestEnqueueManager cubre la máquina chica de enqueue: el tope diagnóstico, que el reset lo reabra, y el envío no bloqueante
-// cuando el canal está lleno.
+// TestEnqueueManager: encola en el canal si hay lugar; si está lleno devuelve false sin bloquear (garantía anti-BUG-6).
 func TestEnqueueManager(t *testing.T) {
-	t.Run("encola hasta el tope y luego corta", func(t *testing.T) {
+	t.Run("encola y devuelve true cuando hay lugar", func(t *testing.T) {
 		resetInjectorState()
 
-		for i := int32(0); i < helpers.DIAG_INJECTION_LIMIT; i++ {
-			if got := enqueueManager(helpers.WHEEL_UP); got != enqueued {
-				t.Fatalf("llamada %d: got %d, quiero enqueued", i, got)
-			}
+		if !enqueueManager(helpers.WHEEL_UP) {
+			t.Fatal("devolvió false con el canal vacío")
 		}
-		if got := injectionsSinceReset.Load(); got != helpers.DIAG_INJECTION_LIMIT {
-			t.Fatalf("contador = %d, quiero %d", got, helpers.DIAG_INJECTION_LIMIT)
-		}
-
-		if got := enqueueManager(helpers.WHEEL_UP); got != atCap {
-			t.Fatalf("sobre el tope: got %d, quiero atCap", got)
-		}
-		if got := injectionsSinceReset.Load(); got != helpers.DIAG_INJECTION_LIMIT {
-			t.Fatalf("el contador subió pasado el tope: %d", got)
+		if got := <-injectorCh; got != helpers.WHEEL_UP {
+			t.Fatalf("llegó %d al canal, quiero %d", got, helpers.WHEEL_UP)
 		}
 	})
 
-	t.Run("reset reabre el tope", func(t *testing.T) {
-		resetInjectorState()
-
-		for i := int32(0); i <= helpers.DIAG_INJECTION_LIMIT; i++ {
-			enqueueManager(helpers.WHEEL_UP)
-		}
-		resetInjectionsCounter()
-
-		if got := enqueueManager(helpers.WHEEL_DOWN); got != enqueued {
-			t.Fatalf("tras reset: got %d, quiero enqueued", got)
-		}
-	})
-
-	t.Run("canal lleno devuelve queueFull sin bloquear", func(t *testing.T) {
+	t.Run("canal lleno devuelve false sin bloquear", func(t *testing.T) {
 		resetInjectorState()
 
 		for i := int32(0); i < int32(cap(injectorCh)); i++ {
 			injectorCh <- helpers.WHEEL_UP
 		}
-		resetInjectionsCounter() // que no corte por tope antes de llegar al select
-
-		if got := enqueueManager(helpers.WHEEL_UP); got != queueFull {
-			t.Fatalf("canal lleno: got %d, quiero queueFull", got)
+		if enqueueManager(helpers.WHEEL_UP) {
+			t.Fatal("devolvió true con el canal lleno")
 		}
 	})
 }

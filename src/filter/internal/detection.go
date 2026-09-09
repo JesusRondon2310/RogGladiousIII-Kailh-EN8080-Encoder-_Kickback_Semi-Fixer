@@ -6,6 +6,7 @@ import (
 	"unsafe"
 
 	"Kickback_Fix/src/helpers"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -17,10 +18,6 @@ var procUnhookWindowsHookEx = user32.NewProc("UnhookWindowsHookEx")
 
 // NewCallback asigna un trampolín C->Go y hay un tope global: se crea UNA sola vez.
 var mouseHookCallback = windows.NewCallback(mouseWheelCatcherHook)
-
-// onInjectionCapReached lo setea StartHook. Windows llama al mouseWheelCatcherHook sin contexto: la única vía de avisarle al orquestador
-// "se llegó al tope diagnóstico" es una variable de paquete.
-var onInjectionCapReached func()
 
 var lastDir atomic.Int32
 var streakCount atomic.Int32
@@ -50,15 +47,13 @@ func wheelDirection(mouseData uint32) int32 {
 	return helpers.WHEEL_DOWN
 }
 
-// 1. Racha de ticks consecutivos en la misma dirección. Si coincide con la última, suma uno; si no, arranca en 1 y reinicia
-// el contador de inyecciones.
+// 1. Racha de ticks consecutivos en la misma dirección. Si coincide con la última, suma uno; si no, arranca de nuevo en 1.
 func updateStreak(direction int32) int32 {
 	if direction == lastDir.Load() {
 		return streakCount.Add(1)
 	}
 	lastDir.Store(direction)
 	streakCount.Store(1)
-	resetInjectionsCounter()
 	return 1
 }
 
@@ -78,26 +73,25 @@ func mouseWheelCatcherHook(nCode, wParam uintptr, lParam unsafe.Pointer) uintptr
 
 	// 2.3. Dirección de este tick + racha acumulada.
 	direction := wheelDirection(event.mouseData)
-	streak := updateStreak(direction)
+	racha := updateStreak(direction)
 
-	// 2.4. Silencio inicial: racha bajo el umbral -> bloquea sin inyectar.
-	if streak < helpers.WATCH_THRESHOLD {
-		fmt.Printf("[BLOQUEADO] dir=%d streak=%d/%d\n", direction, streak, helpers.WATCH_THRESHOLD)
+	// 2.4. Decidir según la racha
+	switch decide(racha) {
+	case pass:
+		fmt.Printf("[PASA] dir=%d racha=%d\n", direction, racha)
+		return passThrough(nCode, wParam, uintptr(lParam))
+	case blockAndInject:
+		fmt.Printf("[COMPENSA] dir=%d racha=%d\n", direction, racha)
+		enqueueManager(direction)
+		return helpers.BLOCK
+	default:
+		fmt.Printf("[SILENCIO] dir=%d racha=%d\n", direction, racha)
 		return helpers.BLOCK
 	}
-
-	// 2.5. Umbral alcanzado: bloquea el físico y pide a injector un sintético.
-	result := enqueueManager(direction)
-	fmt.Printf("[VIGILANCIA] dir=%d streak=%d encolada=%t\n", direction, streak, result == enqueued)
-	if result == atCap && onInjectionCapReached != nil {
-		onInjectionCapReached()
-	}
-	return helpers.BLOCK
 }
 
-// 3. Arranca la detección apuntando a mouseWheelCatcherHook. Devuelve el handle para pararlo. onCap se invoca al llegar al tope.
-func StartHook(onCap func()) (windows.Handle, error) {
-	onInjectionCapReached = onCap
+// 3. Arranca la detección apuntando a mouseWheelCatcherHook. Devuelve el handle para pararlo.
+func StartHook() (windows.Handle, error) {
 	hmod, _, _ := procGetModuleHandleW.Call(0)
 	hook, _, err := procSetWindowsHookExW.Call(uintptr(helpers.MOUSE_HOOK), mouseHookCallback, hmod, 0)
 	if hook == 0 {

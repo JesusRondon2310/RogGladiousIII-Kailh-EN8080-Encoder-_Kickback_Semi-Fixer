@@ -85,10 +85,10 @@ de cada cambio:
 
 ## Roadmap
 
-- [ ] Interfaz gráfica con ícono en la bandeja del sistema
-- [ ] `REQUIRED_CONFIRMATIONS` ajustable en tiempo real, sin recompilar
 - [ ] Hotkey global para activar/desactivar el filtro
+- [ ] `REQUIRED_CONFIRMATIONS` ajustable en tiempo real, sin recompilar
 - [ ] Toggle de inicio automático con Windows
+- [ ] Interfaz gráfica con ícono en la bandeja del sistema
 - [ ] Ícono de bandeja con indicador direccional y color configurable en cada bloqueo
 
 ## Créditos y contexto

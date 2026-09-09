@@ -26,6 +26,6 @@ const MOUSE_INPUT uint32 = 0     // INPUT.type = mouse (INPUT_MOUSE)
 const WHEEL_MOVE uint32 = 0x0800 // MOUSEINPUT.dwFlags: movimiento de rueda (MOUSEEVENTF_WHEEL)
 const ONE_EVENT uint32 = 1       // SendInput debe insertar exactamente 1
 
-// ---- Config del filtro (tuning; candidatas a runtime más adelante) ----
-const WATCH_THRESHOLD int32 = 3      // racha para arrancar vigilancia + compensación
-const DIAG_INJECTION_LIMIT int32 = 3 // tope de inyecciones por gesto (diagnóstico)
+// ---- Config del filtro (tuning; manipulables en runtime más adelante) ----
+const SILENCE_TICKS int32 = 3 // racha que se bloquea en silencio antes de arrancar la compensación
+const TRUST_TICKS int32 = 7   // racha total a la que la dirección se da por confirmada; el tick 8+ pasa

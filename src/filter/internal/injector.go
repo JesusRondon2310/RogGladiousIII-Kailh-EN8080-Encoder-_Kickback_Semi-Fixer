@@ -3,7 +3,6 @@ package filter
 import (
 	"fmt"
 	"runtime"
-	"sync/atomic"
 	"unsafe"
 
 	"Kickback_Fix/src/helpers"
@@ -13,7 +12,6 @@ import (
 // injectorCh lleva las direcciones a inyectar desde el hook hasta la goroutine inyectora. El hook nunca llama a SendInput directamente:
 // hacerlo dentro del callback bloquea el raw input thread contra sí mismo = deadlock.
 var injectorCh = make(chan int32, 16)
-var injectionsSinceReset atomic.Int32
 var user32 = windows.NewLazySystemDLL("user32.dll")
 var procSendInput = user32.NewProc("SendInput")
 
@@ -31,33 +29,15 @@ type mouseInputEvent struct {
 	mi        mouseInput
 }
 
-type enqueueResult int32
-
-const (
-	enqueued enqueueResult = iota
-	queueFull
-	atCap
-)
-
-// 1. Cuenta y encola una inyección para el hilo inyector. Al llegar al tope diagnóstico devuelve Tope sin encolar.
-func enqueueManager(direction int32) enqueueResult {
-	if injectionsSinceReset.Load() >= helpers.DIAG_INJECTION_LIMIT {
-		fmt.Printf("[STOP DIAGNÓSTICO] tope %d alcanzado\n", helpers.DIAG_INJECTION_LIMIT)
-		return atCap
-	}
-
-	injectionsSinceReset.Add(1)
+// 1. Encola un tick sintético para el hilo inyector sin bloquear el hook. Devuelve false si el buffer está lleno (el sintético
+// se pierde; con buffer 16 y compensación de ~4 ticks no debería pasar).
+func enqueueManager(direction int32) bool {
 	select {
 	case injectorCh <- direction:
-		return enqueued
+		return true
 	default:
-		return queueFull
+		return false
 	}
-}
-
-// 2. Reinicia el contador de inyecciones. detection lo llama al cambiar la dirección de la racha.
-func resetInjectionsCounter() {
-	injectionsSinceReset.Store(0)
 }
 
 // buildInput arma el evento de rueda para `direction`. Puro: sin efectos, testeable sin tocar SendInput.
@@ -71,7 +51,7 @@ func buildInput(direction int32) mouseInputEvent {
 	}
 }
 
-// 3. Construye e inyecta un tick de rueda sintético en `direction`. Corre siempre en el hilo inyector, nunca dentro del hook.
+// 2. Construye e inyecta un tick de rueda sintético en `direction`. Corre siempre en el hilo inyector, nunca dentro del hook.
 func execute(direction int32) {
 	if direction != helpers.WHEEL_UP && direction != helpers.WHEEL_DOWN {
 		fmt.Printf("[INYECCIÓN] dirección inválida: %d\n", direction)
@@ -94,7 +74,7 @@ func execute(direction int32) {
 	fmt.Printf("[INYECCIÓN FALLÓ] direction=%d sent=%d err=%v\n", direction, sent, callErr)
 }
 
-// 4. recibe del canal y delega en execute
+// 3. Recibe del canal y delega en execute.
 func injectorLoop() {
 	fmt.Println("[INYECTOR] goroutine arrancada")
 	for direction := range injectorCh {
@@ -104,7 +84,7 @@ func injectorLoop() {
 	fmt.Println("[INYECTOR] canal cerrado, goroutine termina")
 }
 
-// 5. Arranca el hilo inyector: espera direcciones por el canal y ejecuta la inyección fuera del contexto del hook.
+// 4. Arranca el hilo inyector: espera direcciones por el canal y ejecuta la inyección fuera del contexto del hook.
 func StartInjector() {
 	go injectorLoop()
 }

@@ -46,8 +46,8 @@ func Run() (err error) {
 	// 1.2. Arranca el hilo inyector antes de la detección.
 	inner.StartInjector()
 
-	// 1.3. Arranca la detección de ticks: requestQuit va como callback de tope.
-	hook := exception.Try(inner.StartHook(requestQuit))
+	// 1.3. Arranca la detección de ticks.
+	hook := exception.Try(inner.StartHook())
 	fmt.Println("Filtro activo (v2 hasta tarea 4). Ctrl+C para salir.")
 
 	// 1.4. Bombeo de mensajes: sin esto el hook deja de recibir eventos. GetMessageW devuelve 0 en QUIT_MESSAGE, -1 en error.
@@ -66,8 +66,8 @@ func Run() (err error) {
 	return
 }
 
-// 2. Postea el mensaje de salida al hilo del bombeo. detection lo recibe como onCap al llegar al tope. Es var para que los
-// tests del ctrl handler lo sustituyan.
+// 2. Postea el mensaje de salida al hilo del bombeo. Lo llama consoleCtrlHandler en Ctrl+C / cierre. Es var para que los
+// tests lo sustituyan.
 var requestQuit = func() {
 	procPostThreadMessageW.Call(uintptr(mainThreadID.Load()), uintptr(helpers.QUIT_MESSAGE), 0, 0)
 }
