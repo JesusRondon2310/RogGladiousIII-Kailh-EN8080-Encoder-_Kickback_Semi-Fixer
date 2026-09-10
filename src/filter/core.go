@@ -1,13 +1,13 @@
 package filter
 
 import (
+	"Kickback_Fix/src/exception"
+	inner "Kickback_Fix/src/filter/internal"
+	"Kickback_Fix/src/helpers"
 	"fmt"
 	"sync/atomic"
 	"unsafe"
 
-	"Kickback_Fix/src/exception"
-	inner "Kickback_Fix/src/filter/internal"
-	"Kickback_Fix/src/helpers"
 	"golang.org/x/sys/windows"
 )
 
@@ -48,7 +48,7 @@ func Run() (err error) {
 
 	// 1.3. Arranca la detección de ticks.
 	hook := exception.Try(inner.StartHook())
-	fmt.Println("Filtro activo (v2 hasta tarea 4). Ctrl+C para salir.")
+	fmt.Println("Filtro activo. Ctrl+C para salir.")
 
 	// 1.4. Bombeo de mensajes: sin esto el hook deja de recibir eventos. GetMessageW devuelve 0 en QUIT_MESSAGE, -1 en error.
 	var m msg
