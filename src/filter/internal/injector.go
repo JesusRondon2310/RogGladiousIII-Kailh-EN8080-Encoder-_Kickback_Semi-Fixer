@@ -2,10 +2,12 @@ package filter
 
 import (
 	"fmt"
-	"runtime"
+	"os"
+	"syscall"
 	"unsafe"
 
 	"Kickback_Fix/src/helpers"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -14,6 +16,7 @@ import (
 var injectorCh = make(chan int32, 16)
 var user32 = windows.NewLazySystemDLL("user32.dll")
 var procSendInput = user32.NewProc("SendInput")
+var debug = os.Getenv("KICKBACK_DEBUG") != ""
 
 type mouseInput struct {
 	dx          int32
@@ -29,8 +32,13 @@ type mouseInputEvent struct {
 	mi        mouseInput
 }
 
-// 1. Encola un tick sintético para el hilo inyector sin bloquear el hook. Devuelve false si el buffer está lleno (el sintético
-// se pierde; con buffer 16 y compensación de ~4 ticks no debería pasar).
+func trace(format string, a ...any) {
+	if debug {
+		fmt.Printf(format, a...)
+	}
+}
+
+// 1. Encola un tick sintético para el hilo inyector sin bloquear el hook.
 func enqueueManager(direction int32) bool {
 	select {
 	case injectorCh <- direction:
@@ -54,34 +62,31 @@ func buildInput(direction int32) mouseInputEvent {
 // 2. Construye e inyecta un tick de rueda sintético en `direction`. Corre siempre en el hilo inyector, nunca dentro del hook.
 func execute(direction int32) {
 	if direction != helpers.WHEEL_UP && direction != helpers.WHEEL_DOWN {
-		fmt.Printf("[INYECCIÓN] dirección inválida: %d\n", direction)
+		trace("[INYECCIÓN] dirección inválida: %d\n", direction)
 		return
 	}
 
 	in := buildInput(direction)
 
-	sent, _, callErr := procSendInput.Call(
-		uintptr(1),
-		uintptr(unsafe.Pointer(&in)),
-		unsafe.Sizeof(in),
+	sent, _, callErr := syscall.SyscallN(
+		procSendInput.Addr(), uintptr(1), uintptr(unsafe.Pointer(&in)), unsafe.Sizeof(in),
 	)
-	runtime.KeepAlive(in)
 
 	if uint32(sent) == helpers.ONE_EVENT {
-		fmt.Printf("[INYECTADO] direction=%d\n", direction)
+		trace("[INYECTADO] direction=%d\n", direction)
 		return
 	}
-	fmt.Printf("[INYECCIÓN FALLÓ] direction=%d sent=%d err=%v\n", direction, sent, callErr)
+	trace("[INYECCIÓN FALLÓ] direction=%d sent=%d err=%v\n", direction, sent, callErr)
 }
 
 // 3. Recibe del canal y delega en execute.
 func injectorLoop() {
-	fmt.Println("[INYECTOR] goroutine arrancada")
+	trace("[INYECTOR] goroutine arrancada\n")
 	for direction := range injectorCh {
-		fmt.Printf("[INYECTOR] recibido direction=%d\n", direction)
+		trace("[INYECTOR] recibido direction=%d\n", direction)
 		execute(direction)
 	}
-	fmt.Println("[INYECTOR] canal cerrado, goroutine termina")
+	trace("[INYECTOR] canal cerrado, goroutine termina\n")
 }
 
 // 4. Arranca el hilo inyector: espera direcciones por el canal y ejecuta la inyección fuera del contexto del hook.

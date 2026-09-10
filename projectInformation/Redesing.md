@@ -1,9 +1,77 @@
 # wheel-fix — Diseño v2: Detección anidada + compensación por inyección
 
-Documento de diseño, sin implementar todavía
-**Fecha:** 2026-08-26 (corregido — ver Nota de corrección)
-**Estado:** PROPUESTO — no implementado. Se implementa **antes** de cualquier
-objetivo del roadmap (ver [Orden de implementación](#6-orden-de-implementación-planeado)).
+**Fecha del diseño:** 2026-08-26 (corregido — ver Nota de corrección)
+**Estado:** IMPLEMENTADO en Go (2026-09-10), con simplificaciones — ver la sección
+siguiente. Las secciones 1-8 son el diseño original y su razonamiento; el
+comportamiento real es el de "Estado de implementación".
+
+---
+
+## Estado de implementación (2026-09-10)
+
+### Qué es y cómo se corre
+
+- **Todo el código es Go.** No queda nada de Rust (la v1 y este diseño se
+  escribieron primero en Rust; se reescribió el proyecto entero a Go como
+  ejercicio de aprendizaje).
+- **No es un ejecutable distribuible todavía.** No hay instalador, GUI, ícono
+  de bandeja ni autostart — eso es el roadmap.
+- Se compila desde el código fuente y se corre en una terminal:
+  `go run .` — **sin permisos de administrador**.
+- Módulos (SOM en Go): `src/filter/core.go` (orquestador) + `src/filter/internal/`
+  (`detection.go` = hook + máquina de decisión, `injector.go` = goroutine
+  inyectora) + `src/helpers/constants.go` + `src/exception/` (micro-lib
+  try/catch). Win32 a mano vía `syscall` + `golang.org/x/sys/windows`.
+- Trace de fases detrás de la env var `KICKBACK_DEBUG`; sin ella, silencio.
+
+### El filtro implementado
+
+Dos constantes (por ahora `const`; runtime-ajustables es el próximo paso del
+roadmap):
+
+| Constante       | Valor | Rol                                                                     |
+| --------------- | ----- | ----------------------------------------------------------------------- |
+| `SILENCE_TICKS` | 3     | ticks bloqueados en silencio antes de arrancar la compensación          |
+| `TRUST_TICKS`   | 7     | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
+
+- **Racha** (`updateStreak`): cuenta ticks consecutivos en la misma dirección
+  comparando con **el tick anterior** — no con una "dirección confirmada", no
+  hay pase libre para nadie. Cualquier tick en dirección distinta la reinicia
+  a 1. Capeada en `TRUST_TICKS + 1` (no desborda nunca; más allá de ahí el
+  valor da igual).
+- **`decide(racha)`** — sin máquina de estados; todo se deriva de la racha:
+  - `racha ≤ SILENCE_TICKS` → bloquea en silencio, no inyecta
+  - `SILENCE_TICKS < racha ≤ TRUST_TICKS` → bloquea el físico **+ inyecta 1
+    sintético** en esa dirección
+  - `racha > TRUST_TICKS` → pasa (dirección confirmada, flujo normal)
+- Por gesto: 7 físicos bloqueados (3 silencio + 4 compensados), 4 sintéticos
+  inyectados.
+- Un evento inyectado por nosotros (`SELF_INJECTED` / `LLMHF_INJECTED` en
+  `MSLLHOOKSTRUCT.flags`) se deja pasar sin re-procesar, o el hook se dispara
+  a sí mismo en bucle.
+- La inyección corre en una **goroutine aparte** (canal); nunca `SendInput`
+  dentro del callback del hook — eso deadlockea el raw input thread (BUG 6).
+
+### Simplificaciones respecto al diseño de abajo
+
+- Un solo umbral de silencio (`SILENCE_TICKS`), no `UMBRAL_DESCARTE` +
+  `UMBRAL_VIGILANCIA`. El "5" del `UMBRAL_VIGILANCIA` nunca se usó; el silencio
+  es de 3 (coincide con la Nota de corrección, no con la sección 4).
+- No hay `BLOQUE_NUEVO_INTENTO` como estado aparte — tras un corte la racha
+  simplemente reinicia y vuelve a pasar por los mismos 3 ticks de silencio.
+- `TECHO_KICKBACK` y `OBJETIVO_COMPENSACION` son **un solo número**
+  (`TRUST_TICKS = 7`), no dos.
+- No existen estados `Vigilancia` / `Compensando` distintos — son rangos de la
+  racha dentro de `decide`.
+- La confirmación no es una acción: es simplemente "la racha pasó
+  `TRUST_TICKS`".
+
+### Validación
+
+**El kickback del encoder se resolvió en hardware** (firmware vía Armoury
+Crate + limpieza + swap de switches) antes de poder validar v2 contra kickback
+real. El filtro compila, pasa los tests y corre idéntico al diseño, pero no
+hay señal de kickback para medir su efecto en producción.
 
 ---
 
@@ -71,13 +139,13 @@ sostenido por los sintéticos.
 
 ### Constantes de diseño
 
-| Constante | Valor | Significado |
-|---|---|---|
-| `UMBRAL_DESCARTE` | 4 | Racha ≤4 ticks en dirección contraria se descarta como ruido |
-| `UMBRAL_VIGILANCIA` | 5 | A partir de aquí arranca vigilancia **y compensación simultánea** |
-| `TECHO_KICKBACK` | 7-8 | Racha que supera esto sin cortarse = imposible que sea kickback |
-| `BLOQUE_NUEVO_INTENTO` | 2-3 | Tras un corte de racha larga, mínimo de ticks limpios antes de arrancar compensación de nuevo |
-| `OBJETIVO_COMPENSACION` | 7 | Suma total (reales + sintéticos) hasta dejar de inyectar |
+| Constante               | Valor | Significado                                                                                   |
+| ----------------------- | ----- | --------------------------------------------------------------------------------------------- |
+| `UMBRAL_DESCARTE`       | 4     | Racha ≤4 ticks en dirección contraria se descarta como ruido                                  |
+| `UMBRAL_VIGILANCIA`     | 5     | A partir de aquí arranca vigilancia **y compensación simultánea**                             |
+| `TECHO_KICKBACK`        | 7-8   | Racha que supera esto sin cortarse = imposible que sea kickback                               |
+| `BLOQUE_NUEVO_INTENTO`  | 2-3   | Tras un corte de racha larga, mínimo de ticks limpios antes de arrancar compensación de nuevo |
+| `OBJETIVO_COMPENSACION` | 7     | Suma total (reales + sintéticos) hasta dejar de inyectar                                      |
 
 ### Flujo, paso a paso
 
@@ -153,20 +221,22 @@ tick 17: A  -> ya no se bloquea ni se inyecta. LAST_DIR=A estable.
 
 ## 6. Orden de implementación planeado
 
-Este diseño se implementa **antes** de cualquier objetivo del roadmap, no
-después. El código de detección debe quedar funcionando al 100% primero —
-sin cambios pendientes sobre su lógica central — y solo entonces se
-construye encima (GUI, hotkey, autostart, bandeja, etc.).
+La lógica de detección va **primero, al 100%**, y solo entonces se construye
+encima (GUI, hotkey, autostart, bandeja).
 
-1. Modularizar `main.rs` — **ya hecho** (`detection.rs`, 115 líneas)
-2. **Este diseño v2** (detección anidada + compensación simultánea) — primero
-3. Hotkey global para activar/desactivar el filtro
-4. `REQUIRED_CONFIRMATIONS` y demás constantes ajustables en tiempo real vía GUI
-5. Toggle de autostart con Windows
-6. Ícono de bandeja con indicador direccional + color configurable
+1. ~~Modularizar~~ — **hecho**. Reescritura completa a Go, SOM aplicado.
+2. ~~Diseño v2~~ (detección anidada + compensación) — **hecho** (ver "Estado de
+   implementación").
+3. Constantes (`SILENCE_TICKS`, `TRUST_TICKS`) ajustables en runtime — server
+   `net/http` local + GUI web embebida con `//go:embed`, sin recompilar ni
+   reiniciar. **Siguiente.**
+4. Hotkey global + botón en la GUI para activar/desactivar el filtro.
+5. Toggle de autostart con Windows (registro `HKCU\...\Run`).
+6. Ícono de bandeja con indicador direccional + color configurable por bloqueo.
+7. (Más lejos) port a Linux (`evdev`).
 
-El MVP se considera terminado solo cuando no queden cambios pendientes
-sobre la lógica central del filtro.
+El MVP se considera terminado cuando el ejecutable ajustable en runtime esté
+completo.
 
 ## 7. Diagrama de flujo
 
@@ -203,6 +273,7 @@ flowchart TD
 ```
 
 **Leyenda de colores:**
+
 - **Gris** — pasos neutrales, sin decisión (tick llega, silencio inicial, flujo normal)
 - **Ámbar** — vigilancia activa, compensación en curso
 - **Coral** — descartado (ruido o kickback contenido), inyección detenida

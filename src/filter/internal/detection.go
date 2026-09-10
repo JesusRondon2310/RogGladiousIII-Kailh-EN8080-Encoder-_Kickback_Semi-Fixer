@@ -1,11 +1,10 @@
 package filter
 
 import (
-	"fmt"
-	"sync/atomic"
-	"unsafe"
-
 	"Kickback_Fix/src/helpers"
+	"sync/atomic"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -35,8 +34,16 @@ type msllHookStruct struct {
 	dwExtraInfo uintptr
 }
 
+type action int
+
+const (
+	pass action = iota
+	block
+	blockAndInject
+)
+
 var passThrough = func(nCode, wParam, lParam uintptr) uintptr {
-	ret, _, _ := procCallNextHookEx.Call(0, nCode, wParam, lParam)
+	ret, _, _ := syscall.SyscallN(procCallNextHookEx.Addr(), 0, nCode, wParam, lParam)
 	return ret
 }
 
@@ -47,50 +54,60 @@ func wheelDirection(mouseData uint32) int32 {
 	return helpers.WHEEL_DOWN
 }
 
-// 1. Racha de ticks consecutivos en la misma dirección. Si coincide con la última, suma uno; si no, arranca de nuevo en 1.
 func updateStreak(direction int32) int32 {
-	if direction == lastDir.Load() {
-		return streakCount.Add(1)
+	if direction != lastDir.Load() {
+		lastDir.Store(direction)
+		streakCount.Store(1)
+		return 1
 	}
-	lastDir.Store(direction)
-	streakCount.Store(1)
-	return 1
+	if n := streakCount.Load(); n > helpers.TRUST_TICKS {
+		return n
+	}
+	return streakCount.Add(1)
 }
 
-// 2. Windows lo llama en cada evento de mouse, en el hilo que instaló el hook. lParam apunta a un MSLLHOOKSTRUCT válido solo
-// durante la llamada.
+func decide(streak int32) action {
+	if streak <= helpers.SILENCE_TICKS {
+		return block
+	}
+	if streak <= helpers.TRUST_TICKS {
+		return blockAndInject
+	}
+	return pass
+}
+
+// 1. Windows lo llama en cada evento de mouse, en el hilo que instaló el hook. lParam apunta a un MSLLHOOKSTRUCT válido solo durante la llamada.
 func mouseWheelCatcherHook(nCode, wParam uintptr, lParam unsafe.Pointer) uintptr {
-	// 2.1. Solo eventos de rueda; el resto pasa directo. nCode llega como uintptr: se lee con signo.
+	// 1.1. Solo eventos de rueda; el resto pasa directo. nCode llega como uintptr: se lee con signo.
 	if int32(nCode) < 0 || uint32(wParam) != helpers.WHEEL_EVENT {
 		return passThrough(nCode, wParam, uintptr(lParam))
 	}
 	event := (*msllHookStruct)(lParam)
 
-	// 2.2. Un evento inyectado por nosotros pasa sin re-procesar, o el hook se dispara a sí mismo en bucle.
+	// 1.2. Un evento inyectado por nosotros pasa sin re-procesar, o el hook se dispara a sí mismo en bucle.
 	if event.flags&helpers.SELF_INJECTED != 0 {
 		return passThrough(nCode, wParam, uintptr(lParam))
 	}
 
-	// 2.3. Dirección de este tick + racha acumulada.
+	// 1.3. Dirección de este tick + racha acumulada.
 	direction := wheelDirection(event.mouseData)
-	racha := updateStreak(direction)
+	streak := updateStreak(direction)
 
-	// 2.4. Decidir según la racha
-	switch decide(racha) {
+	// 1.4. Decidir según la racha
+	switch decide(streak) {
 	case pass:
-		fmt.Printf("[PASA] dir=%d racha=%d\n", direction, racha)
 		return passThrough(nCode, wParam, uintptr(lParam))
 	case blockAndInject:
-		fmt.Printf("[COMPENSA] dir=%d racha=%d\n", direction, racha)
+		trace("[COMPENSA] dir=%d racha=%d\n", direction, streak)
 		enqueueManager(direction)
 		return helpers.BLOCK
 	default:
-		fmt.Printf("[SILENCIO] dir=%d racha=%d\n", direction, racha)
+		trace("[SILENCIO] dir=%d racha=%d\n", direction, streak)
 		return helpers.BLOCK
 	}
 }
 
-// 3. Arranca la detección apuntando a mouseWheelCatcherHook. Devuelve el handle para pararlo.
+// 2. Arranca la detección apuntando a mouseWheelCatcherHook. Devuelve el handle para pararlo.
 func StartHook() (windows.Handle, error) {
 	hmod, _, _ := procGetModuleHandleW.Call(0)
 	hook, _, err := procSetWindowsHookExW.Call(uintptr(helpers.MOUSE_HOOK), mouseHookCallback, hmod, 0)
@@ -100,7 +117,7 @@ func StartHook() (windows.Handle, error) {
 	return windows.Handle(hook), nil
 }
 
-// 4. Para la detección.
+// 3. Para la detección.
 func StopHook(hook windows.Handle) error {
 	if ret, _, err := procUnhookWindowsHookEx.Call(uintptr(hook)); ret == 0 {
 		return err
