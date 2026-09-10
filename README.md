@@ -22,9 +22,10 @@ como ejercicio de aprendizaje.
   ícono de bandeja ni autostart — eso es el roadmap.
 - Se compila desde el código fuente y se corre en una terminal:
   `go run .` — **sin permisos de administrador**.
-- Se configura editando constantes en `src/helpers/constants.go` y volviendo a
-  compilar. El ajuste en tiempo real (server local + GUI web embebida) es el
-  próximo paso del roadmap.
+- Al arrancar levanta una API HTTP local en `127.0.0.1:47800` para ajustar
+  `SILENCE_TICKS` / `TRUST_TICKS` en tiempo real (ver Configuración). La GUI de
+  escritorio en Java que la consumirá es el próximo paso del roadmap; por ahora
+  se maneja con `curl`.
 
 ## Cómo funciona (v2)
 
@@ -92,21 +93,33 @@ $env:KICKBACK_DEBUG=1; go run .
 
 ## Configuración
 
-Por ahora, en `src/helpers/constants.go`, recompilando después de cada cambio:
+Dos valores, ajustables en caliente por la API HTTP local (`127.0.0.1:47800`)
+mientras el filtro corre — sin recompilar ni reiniciar:
 
 - `SILENCE_TICKS` — ticks bloqueados en silencio antes de arrancar la
-  compensación. Por defecto `3`.
+  compensación. Por defecto `3`, rango **2-5**. Bájalo si sientes el filtro
+  lento al cambiar de dirección a propósito.
 - `TRUST_TICKS` — racha total a la que la dirección se da por confirmada; el
-  tick siguiente ya pasa. Por defecto `7`.
+  tick siguiente ya pasa. Por defecto `7`, rango **6-10**. Súbelo si el
+  kickback se sigue colando.
 
-Súbelos si el kickback se sigue colando; bájalos si sientes el filtro lento al
-cambiar de dirección a propósito.
+```powershell
+# ver la config actual (curl.exe, no el alias `curl` de PowerShell)
+curl.exe 127.0.0.1:47800/config
+
+# cambiarla (valida rango; 400 si no cuadra)
+curl.exe -X PUT 127.0.0.1:47800/config -d '{\"silence\":4,\"trust\":9}'
+```
+
+Los valores por defecto viven en `src/helpers/constants.go`; los límites de los
+sliders, en `src/server/config_api.go`.
 
 ## Roadmap
 
 - [ ] `SILENCE_TICKS` / `TRUST_TICKS` ajustables en tiempo real — server
-      `net/http` local + GUI web embebida (`//go:embed`), sin recompilar ni
-      reiniciar
+      `net/http` local en el núcleo Go (`127.0.0.1`), sin recompilar ni reiniciar
+- [ ] GUI de escritorio en **Java** (`gui/`, proceso aparte) que habla con el
+      núcleo por HTTP local — sliders de configuración, estado, toggle
 - [ ] Hotkey global + botón en la GUI para activar/desactivar el filtro
 - [ ] Toggle de autostart con Windows (registro `HKCU\...\Run`)
 - [ ] Ícono de bandeja con indicador direccional y color configurable por bloqueo

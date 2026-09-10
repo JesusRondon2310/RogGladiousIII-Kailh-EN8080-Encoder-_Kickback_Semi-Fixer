@@ -1,6 +1,7 @@
 package filter
 
 import (
+	"Kickback_Fix/src/config"
 	"Kickback_Fix/src/helpers"
 	"sync/atomic"
 	"syscall"
@@ -60,17 +61,17 @@ func updateStreak(direction int32) int32 {
 		streakCount.Store(1)
 		return 1
 	}
-	if n := streakCount.Load(); n > helpers.TRUST_TICKS {
+	if n := streakCount.Load(); n > config.Trust() {
 		return n
 	}
 	return streakCount.Add(1)
 }
 
 func decide(streak int32) action {
-	if streak <= helpers.SILENCE_TICKS {
+	if streak <= config.Silence() {
 		return block
 	}
-	if streak <= helpers.TRUST_TICKS {
+	if streak <= config.Trust() {
 		return blockAndInject
 	}
 	return pass
