@@ -83,6 +83,11 @@ func mouseWheelCatcherHook(nCode, wParam uintptr, lParam unsafe.Pointer) uintptr
 	if int32(nCode) < 0 || uint32(wParam) != helpers.WHEEL_EVENT {
 		return passThrough(nCode, wParam, uintptr(lParam))
 	}
+
+	// 1.1b. Filtro apagado desde la GUI: todo tick de rueda pasa sin tocar.
+	if !config.Enabled() {
+		return passThrough(nCode, wParam, uintptr(lParam))
+	}
 	event := (*msllHookStruct)(lParam)
 
 	// 1.2. Un evento inyectado por nosotros pasa sin re-procesar, o el hook se dispara a sí mismo en bucle.

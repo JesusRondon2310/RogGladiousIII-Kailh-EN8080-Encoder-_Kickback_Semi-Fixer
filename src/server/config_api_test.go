@@ -9,11 +9,12 @@ import (
 	"testing"
 )
 
-// resetConfig deja config en los valores por defecto (3, 7). Se llama antes y
-// después de cada test que los cambia — los tests comparten el estado global.
+// resetConfig deja config en los valores por defecto (3, 7, encendido). Se
+// llama antes y después de cada test que la cambia — el estado es global.
 func resetConfig() {
 	config.SetSilence(3)
 	config.SetTrust(7)
+	config.SetEnabled(true)
 }
 
 // validateConfig como unidad. El caso silence >= trust no se prueba: con
@@ -59,25 +60,26 @@ func TestHandleGetConfig(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("cuerpo no es JSON válido: %v", err)
 	}
-	if got.Silence != 3 || got.Trust != 7 {
-		t.Errorf("dto = %+v, quería {Silence:3 Trust:7}", got)
+	if got.Silence != 3 || got.Trust != 7 || !got.Enabled {
+		t.Errorf("dto = %+v, quería {Silence:3 Trust:7 Enabled:true}", got)
 	}
 }
 
-// PUT /config válido: aplica el par y responde 204.
+// PUT /config válido: aplica silence, trust y enabled, y responde 204.
 func TestHandlePutConfigValido(t *testing.T) {
 	resetConfig()
 	defer resetConfig()
 
-	req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(`{"silence":2,"trust":9}`))
+	body := `{"silence":2,"trust":9,"enabled":false}`
+	req := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	handlePutConfig(rec, req)
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("código = %d, quería 204. cuerpo: %s", rec.Code, rec.Body)
 	}
-	if config.Silence() != 2 || config.Trust() != 9 {
-		t.Errorf("config = (%d,%d), quería (2,9)", config.Silence(), config.Trust())
+	if config.Silence() != 2 || config.Trust() != 9 || config.Enabled() {
+		t.Errorf("config = (%d,%d,enabled=%v), quería (2,9,false)", config.Silence(), config.Trust(), config.Enabled())
 	}
 }
 
@@ -103,8 +105,8 @@ func TestHandlePutConfigRechazos(t *testing.T) {
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("código = %d, quería 400", rec.Code)
 			}
-			if config.Silence() != 3 || config.Trust() != 7 {
-				t.Errorf("config cambió a (%d,%d) tras un rechazo", config.Silence(), config.Trust())
+			if config.Silence() != 3 || config.Trust() != 7 || !config.Enabled() {
+				t.Errorf("config cambió tras un rechazo: (%d,%d,%v)", config.Silence(), config.Trust(), config.Enabled())
 			}
 		})
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"unsafe"
 
+	"Kickback_Fix/src/config"
 	"Kickback_Fix/src/helpers"
 )
 
@@ -42,6 +43,28 @@ func TestMouseWheelCatcherHook(t *testing.T) {
 		}
 		if got := streakCount.Load(); got != 5 {
 			t.Errorf("la racha cambió: %d, quiero 5", got)
+		}
+	})
+
+	t.Run("filtro apagado: todo pasa directo y no toca la racha", func(t *testing.T) {
+		resetDetectionState()
+		config.SetEnabled(false)
+		t.Cleanup(func() { config.SetEnabled(true) })
+		streakCount.Store(5)
+		var passed bool
+		passThrough = func(_, _, _ uintptr) uintptr { passed = true; return 0 }
+
+		ev := wheelEvent(helpers.WHEEL_DOWN, false)
+		mouseWheelCatcherHook(0, uintptr(helpers.WHEEL_EVENT), unsafe.Pointer(&ev))
+
+		if !passed {
+			t.Error("no llamó a passThrough")
+		}
+		if got := streakCount.Load(); got != 5 {
+			t.Errorf("la racha cambió con el filtro apagado: %d, quiero 5", got)
+		}
+		if len(injectorCh) != 0 {
+			t.Errorf("encoló %d con el filtro apagado, quiero 0", len(injectorCh))
 		}
 	})
 

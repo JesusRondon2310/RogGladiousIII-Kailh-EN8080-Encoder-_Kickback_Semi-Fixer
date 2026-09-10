@@ -11,6 +11,7 @@ import (
 type configDTO struct {
 	Silence int32 `json:"silence"`
 	Trust   int32 `json:"trust"`
+	Enabled bool  `json:"enabled"`
 }
 
 // Cuanto dura el Silencio
@@ -35,7 +36,7 @@ func validateConfig(c configDTO) error {
 }
 
 func handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	dto := configDTO{Silence: config.Silence(), Trust: config.Trust()}
+	dto := configDTO{Silence: config.Silence(), Trust: config.Trust(), Enabled: config.Enabled()}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(dto)
 }
@@ -52,6 +53,7 @@ func handlePutConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	config.SetSilence(dto.Silence)
 	config.SetTrust(dto.Trust)
+	config.SetEnabled(dto.Enabled)
 	w.WriteHeader(http.StatusNoContent)
 }
 

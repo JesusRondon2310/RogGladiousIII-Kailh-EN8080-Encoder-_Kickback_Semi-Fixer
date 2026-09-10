@@ -15,19 +15,23 @@ import (
 
 var silence atomic.Int32
 var trust atomic.Int32
+var enabled atomic.Bool
 
-// init deja el estado en los valores por defecto de helpers. Go lo llama solo
-// al cargar el paquete.
+// init deja el estado en los valores por defecto de helpers, con el filtro
+// encendido. Go lo llama solo al cargar el paquete.
 func init() {
 	silence.Store(helpers.SILENCE_TICKS)
 	trust.Store(helpers.TRUST_TICKS)
+	enabled.Store(true)
 }
 
 // Lecturas — las usa el hook en el hot path.
 func Silence() int32 { return silence.Load() }
 func Trust() int32   { return trust.Load() }
+func Enabled() bool  { return enabled.Load() }
 
 // Escrituras — las usa el servidor HTTP. La validación (rango, silence < trust)
 // va en la capa del servidor, donde llega la petición.
 func SetSilence(n int32) { silence.Store(n) }
 func SetTrust(n int32)   { trust.Store(n) }
+func SetEnabled(b bool)  { enabled.Store(b) }

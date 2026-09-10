@@ -20,23 +20,25 @@ comportamiento real es el de "Estado de implementación".
   `go run .` — **sin permisos de administrador**.
 - Módulos (SOM en Go): `src/filter/core.go` (orquestador) + `src/filter/internal/`
   (`detection.go` = hook + máquina de decisión, `injector.go` = goroutine
-  inyectora) + `src/helpers/constants.go` + `src/config/config.go` (los dos
-  valores de tuning como `atomic.Int32`, ajustables en caliente) + `src/server/`
-  (`core.go` = `StartServer`, `config_api.go` = API HTTP local) + `src/exception/`
-  (micro-lib try/catch). Win32 a mano vía `syscall` + `golang.org/x/sys/windows`.
+  inyectora) + `src/helpers/constants.go` + `src/config/config.go` (`silence`
+  /`trust` `atomic.Int32` + `enabled` `atomic.Bool`, ajustables en caliente) +
+  `src/server/` (`core.go` = `StartServer`, `config_api.go` = API HTTP local) +
+  `src/exception/` (micro-lib try/catch). Win32 a mano vía `syscall` +
+  `golang.org/x/sys/windows`.
 - `main.go` arranca `server.StartServer()` (goroutine) y luego `filter.Run()`.
 - Trace de fases detrás de la env var `KICKBACK_DEBUG`; sin ella, silencio.
 
 ### El filtro implementado
 
-Dos valores de tuning, ajustables en caliente por la API HTTP local
-(`127.0.0.1:47800`, `GET`/`PUT /config`) sin recompilar. Por defecto en
+Ajustable en caliente por la API HTTP local (`127.0.0.1:47800`, `GET`/`PUT
+/config` con `{"silence","trust","enabled"}`) sin recompilar. Por defecto en
 `helpers/constants.go`; rangos válidos (sliders) en `server/config_api.go`:
 
-| Constante       | Valor | Rol                                                                     |
-| --------------- | ----- | ----------------------------------------------------------------------- |
-| `SILENCE_TICKS` | 3 (2-5)  | ticks bloqueados en silencio antes de arrancar la compensación       |
-| `TRUST_TICKS`   | 7 (6-10) | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
+| Campo    | Valor    | Rol                                                                     |
+| -------- | -------- | ---------------------------------------------------------------------- |
+| `silence`| 3 (2-5)  | ticks bloqueados en silencio antes de arrancar la compensación         |
+| `trust`  | 7 (6-10) | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
+| `enabled`| `true`   | con `false` el hook deja pasar todo tick sin tocarlo (on/off de la GUI) |
 
 - **Racha** (`updateStreak`): cuenta ticks consecutivos en la misma dirección
   comparando con **el tick anterior** — no con una "dirección confirmada", no

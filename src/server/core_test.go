@@ -22,7 +22,7 @@ func TestRoutes(t *testing.T) {
 		t.Errorf("GET /config no enruta: código %d", getRec.Code)
 	}
 
-	put := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(`{"silence":4,"trust":8}`))
+	put := httptest.NewRequest(http.MethodPut, "/config", strings.NewReader(`{"silence":4,"trust":8,"enabled":true}`))
 	putRec := httptest.NewRecorder()
 	mux.ServeHTTP(putRec, put)
 	if putRec.Code != http.StatusNoContent {

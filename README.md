@@ -93,22 +93,25 @@ $env:KICKBACK_DEBUG=1; go run .
 
 ## Configuración
 
-Dos valores, ajustables en caliente por la API HTTP local (`127.0.0.1:47800`)
-mientras el filtro corre — sin recompilar ni reiniciar:
+Ajustable en caliente por la API HTTP local (`127.0.0.1:47800`) mientras el
+filtro corre — sin recompilar ni reiniciar:
 
-- `SILENCE_TICKS` — ticks bloqueados en silencio antes de arrancar la
-  compensación. Por defecto `3`, rango **2-5**. Bájalo si sientes el filtro
-  lento al cambiar de dirección a propósito.
-- `TRUST_TICKS` — racha total a la que la dirección se da por confirmada; el
-  tick siguiente ya pasa. Por defecto `7`, rango **6-10**. Súbelo si el
-  kickback se sigue colando.
+- `silence` — ticks bloqueados en silencio antes de arrancar la compensación.
+  Por defecto `3`, rango **2-5**. Bájalo si sientes el filtro lento al cambiar
+  de dirección a propósito.
+- `trust` — racha total a la que la dirección se da por confirmada; el tick
+  siguiente ya pasa. Por defecto `7`, rango **6-10**. Súbelo si el kickback se
+  sigue colando.
+- `enabled` — `true`/`false`. Con `false` el hook deja pasar todo tick sin
+  tocarlo (el on/off de la GUI).
 
 ```powershell
 # ver la config actual (curl.exe, no el alias `curl` de PowerShell)
 curl.exe 127.0.0.1:47800/config
+#  -> {"silence":3,"trust":7,"enabled":true}
 
-# cambiarla (valida rango; 400 si no cuadra)
-curl.exe -X PUT 127.0.0.1:47800/config -d '{\"silence\":4,\"trust\":9}'
+# cambiarla (PUT reemplaza los 3 campos; valida rango, 400 si no cuadra)
+curl.exe -X PUT 127.0.0.1:47800/config -d '{\"silence\":4,\"trust\":9,\"enabled\":true}'
 ```
 
 Los valores por defecto viven en `src/helpers/constants.go`; los límites de los

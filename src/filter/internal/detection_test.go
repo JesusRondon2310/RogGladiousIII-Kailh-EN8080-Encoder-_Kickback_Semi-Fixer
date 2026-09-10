@@ -7,13 +7,15 @@ import (
 	"testing"
 	"unsafe"
 
+	"Kickback_Fix/src/config"
 	"Kickback_Fix/src/helpers"
 )
 
-// resetDetectionState: racha en cero y canal drenado. Compartido con detection_hook_test.go.
+// resetDetectionState: racha en cero, canal drenado y filtro encendido. Compartido con detection_hook_test.go.
 func resetDetectionState() {
 	lastDir.Store(0)
 	streakCount.Store(0)
+	config.SetEnabled(true)
 	resetInjectorState()
 }
 
