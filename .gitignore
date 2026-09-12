@@ -2,9 +2,8 @@
 *.exe
 *.test
 
-# Go
-go.work
-go.work.sum
+# Rust
+/target
 
 # Editor / tooling
 .zed/

@@ -1,46 +1,46 @@
 # wheel-fix — Diseño v2: Detección anidada + compensación por inyección
 
 **Fecha del diseño:** 2026-08-26 (corregido — ver Nota de corrección)
-**Estado:** IMPLEMENTADO en Go (2026-09-10), con simplificaciones — ver la sección
-siguiente. Las secciones 1-8 son el diseño original y su razonamiento; el
-comportamiento real es el de "Estado de implementación".
+**Estado:** IMPLEMENTADO en Go (2026-09-10), luego portado a Rust (2026-09-12),
+con simplificaciones — ver la sección siguiente. Las secciones 1-8 son el
+diseño original y su razonamiento; el comportamiento real es el de "Estado de
+implementación".
 
 ---
 
-## Estado de implementación (2026-09-10)
+## Estado de implementación (2026-09-12)
 
 ### Qué es y cómo se corre
 
-- **Todo el código es Go.** No queda nada de Rust (la v1 y este diseño se
-  escribieron primero en Rust; se reescribió el proyecto entero a Go como
-  ejercicio de aprendizaje).
+- **Todo el código es Rust.** El proyecto se escribió originalmente en Rust,
+  se reescribió por completo a Go como ejercicio de aprendizaje, y luego se
+  volvió a portar a Rust — con las lecciones del paso por Go (sobre todo el
+  BUG 6, el deadlock de `SendInput`) ya incorporadas desde el primer día del
+  puerto.
 - **No es un ejecutable distribuible todavía.** No hay instalador, GUI, ícono
   de bandeja ni autostart — eso es el roadmap.
 - Se compila desde el código fuente y se corre en una terminal:
-  `go run .` — **sin permisos de administrador**.
-- Módulos (SOM en Go): `src/filter/core.go` (orquestador) + `src/filter/internal/`
-  (`detection.go` = hook + máquina de decisión, `injector.go` = goroutine
-  inyectora) + `src/helpers/constants.go` + `src/config/config.go` (`silence`
-  /`trust` `atomic.Int32` + `enabled` `atomic.Bool`, ajustables en caliente) +
-  `src/server/` (`core.go` = `StartServer`, `config_api.go` = API HTTP local) +
-  `src/exception/` (micro-lib try/catch). Win32 a mano vía `syscall` +
-  `golang.org/x/sys/windows`.
-- `main.go` arranca `server.StartServer()` (goroutine) y luego `filter.Run()`.
+  `cargo run` — **sin permisos de administrador**.
+- Módulos (SOM en Rust): `src/filter/mod.rs` (manifiesto) + `src/filter/core.rs`
+  (orquestador) + `src/filter/detection.rs` (hook + máquina de decisión) +
+  `src/filter/injector.rs` (hilo inyector) + `src/helpers/constants.rs` +
+  `src/helpers/trace.rs` (macro de logging condicional). Sin micro-lib de
+  try/catch: el manejo de errores es el `Result<T, E>` + `?` nativos de Rust.
+  Win32 a mano vía bindings crudos de la crate `windows-sys` (sin wrappers, sin
+  runtime propio — mismo nivel de control que el `syscall` de Go).
 - Trace de fases detrás de la env var `KICKBACK_DEBUG`; sin ella, silencio.
 
 ### El filtro implementado
 
-Ajustable en caliente por la API HTTP local (`127.0.0.1:47800`, `GET`/`PUT
-/config` con `{"silence","trust","enabled"}`) sin recompilar. Por defecto en
-`helpers/constants.go`; rangos válidos (sliders) en `server/config_api.go`:
+Dos constantes (por ahora `const`; runtime-ajustables es el próximo paso del
+roadmap):
 
-| Campo    | Valor    | Rol                                                                     |
-| -------- | -------- | ---------------------------------------------------------------------- |
-| `silence`| 3 (2-5)  | ticks bloqueados en silencio antes de arrancar la compensación         |
-| `trust`  | 7 (6-10) | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
-| `enabled`| `true`   | con `false` el hook deja pasar todo tick sin tocarlo (on/off de la GUI) |
+| Constante       | Valor | Rol                                                                     |
+| --------------- | ----- | ----------------------------------------------------------------------- |
+| `SILENCE_TICKS` | 3     | ticks bloqueados en silencio antes de arrancar la compensación          |
+| `TRUST_TICKS`   | 7     | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
 
-- **Racha** (`updateStreak`): cuenta ticks consecutivos en la misma dirección
+- **Racha** (`update_streak`): cuenta ticks consecutivos en la misma dirección
   comparando con **el tick anterior** — no con una "dirección confirmada", no
   hay pase libre para nadie. Cualquier tick en dirección distinta la reinicia
   a 1. Capeada en `TRUST_TICKS + 1` (no desborda nunca; más allá de ahí el
@@ -55,7 +55,7 @@ Ajustable en caliente por la API HTTP local (`127.0.0.1:47800`, `GET`/`PUT
 - Un evento inyectado por nosotros (`SELF_INJECTED` / `LLMHF_INJECTED` en
   `MSLLHOOKSTRUCT.flags`) se deja pasar sin re-procesar, o el hook se dispara
   a sí mismo en bucle.
-- La inyección corre en una **goroutine aparte** (canal); nunca `SendInput`
+- La inyección corre en un **hilo aparte** (canal `mpsc`); nunca `SendInput`
   dentro del callback del hook — eso deadlockea el raw input thread (BUG 6).
 
 ### Simplificaciones respecto al diseño de abajo
@@ -233,16 +233,13 @@ encima (GUI, hotkey, autostart, bandeja).
 1. ~~Modularizar~~ — **hecho**. Reescritura completa a Go, SOM aplicado.
 2. ~~Diseño v2~~ (detección anidada + compensación) — **hecho** (ver "Estado de
    implementación").
-3. Constantes (`SILENCE_TICKS`, `TRUST_TICKS`) ajustables en runtime — **hecho
-   del lado Go**: `src/config/` + API HTTP local `net/http` en `127.0.0.1:47800`
-   (`GET`/`PUT /config`, validación de rango). Falta la GUI.
-4. GUI de escritorio en **Java** (Swing/JavaFX), proceso aparte en `gui/`, que
-   habla con la API local por HTTP: dos sliders (`SILENCE_TICKS` 2-5,
-   `TRUST_TICKS` 6-10), estado, toggle on/off. **Siguiente.**
-5. Hotkey global + botón en la GUI para activar/desactivar el filtro.
-6. Toggle de autostart con Windows (registro `HKCU\...\Run`).
-7. Ícono de bandeja con indicador direccional + color configurable por bloqueo.
-8. (Más lejos) port a Linux (`evdev`).
+3. Constantes (`SILENCE_TICKS`, `TRUST_TICKS`) ajustables en runtime — servidor
+   HTTP local + GUI (stack por definir), sin recompilar ni reiniciar.
+   **Siguiente.**
+4. Hotkey global + botón en la GUI para activar/desactivar el filtro.
+5. Toggle de autostart con Windows (registro `HKCU\...\Run`).
+6. Ícono de bandeja con indicador direccional + color configurable por bloqueo.
+7. (Más lejos) port a Linux (`evdev`).
 
 El MVP se considera terminado cuando el ejecutable ajustable en runtime esté
 completo.

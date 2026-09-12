@@ -2,7 +2,7 @@
 
 ![ASUS ROG Gladius III](https://m.media-amazon.com/images/I/51MWi-ZraSL.jpg)
 
-Filtro de software en **Go** para el problema conocido de **"wheel kickback"**
+Filtro de software en **Rust** para el problema conocido de **"wheel kickback"**
 del [ASUS ROG Gladius III](https://www.amazon.es/ASUS-ROG-Gladius-III-intercambiables/dp/B096XKJK1V)
 (y otros ratones que usan el mismo encoder Kailh EN8080): al girar la rueda, el
 encoder a veces genera un tick fantasma en dirección contraria, causando que la
@@ -15,17 +15,18 @@ por software**.
 ## Estado del proyecto
 
 **Alpha 0.2 — terminada.** La lógica de detección y compensación (v2) está
-implementada y probada. Todo el código es Go; la reescritura desde Rust se hizo
-como ejercicio de aprendizaje.
+implementada y probada. Todo el código es Rust; el proyecto se escribió
+originalmente en Rust, se reescribió por completo a Go como ejercicio de
+aprendizaje, y luego se volvió a portar a Rust (con las lecciones del paso por
+Go ya incorporadas).
 
 - **No es un ejecutable distribuible.** No hay instalador, interfaz gráfica,
   ícono de bandeja ni autostart — eso es el roadmap.
 - Se compila desde el código fuente y se corre en una terminal:
-  `go run .` — **sin permisos de administrador**.
-- Al arrancar levanta una API HTTP local en `127.0.0.1:47800` para ajustar
-  `SILENCE_TICKS` / `TRUST_TICKS` en tiempo real (ver Configuración). La GUI de
-  escritorio en Java que la consumirá es el próximo paso del roadmap; por ahora
-  se maneja con `curl`.
+  `cargo run` — **sin permisos de administrador**.
+- Se configura editando constantes en `src/helpers/constants.rs` y volviendo a
+  compilar. El ajuste en tiempo real (server local + GUI) es el próximo paso
+  del roadmap.
 
 ## Cómo funciona (v2)
 
@@ -48,8 +49,8 @@ tick físico que se retiene, se inyecta uno sintético, así el usuario ve
 movimiento mientras la racha termina de confirmarse. Si la racha se corta antes
 de `TRUST_TICKS`, se descarta y empieza de nuevo.
 
-La inyección (`SendInput`) corre en una goroutine aparte, comunicada por un
-canal — nunca dentro del callback del hook, porque eso bloquea el raw input
+La inyección (`SendInput`) corre en un hilo aparte, comunicado por un canal
+(`mpsc`) — nunca dentro del callback del hook, porque eso bloquea el raw input
 thread del sistema.
 
 ## Validación
@@ -68,61 +69,46 @@ responsividad. Ver `projectInformation/` para el detalle.
 
 ## Requisitos
 
-- Windows (usa la API Win32 vía `syscall` + `golang.org/x/sys/windows`)
-- [Go](https://go.dev) 1.24+
+- Windows (usa la API Win32 vía la crate `windows-sys`, bindings crudos sin
+  wrappers ni runtime propio)
+- [Rust](https://www.rust-lang.org) (edición 2024) vía `rustup`
 
-Sin CGo, sin compilador de C, sin privilegios de administrador.
+Sin dependencias de C, sin privilegios de administrador.
 
 ## Compilar y ejecutar
 
 ```powershell
-go run .
+cargo run
 ```
 
-o, para un binario:
+o, para un binario optimizado:
 
 ```powershell
-go build -ldflags="-s -w" -trimpath -o Kickback_Fix.exe .
+cargo build --release
 ```
 
 Ctrl+C para salir (desengancha el hook limpiamente). Para ver el trace de fases:
 
 ```powershell
-$env:KICKBACK_DEBUG=1; go run .
+$env:KICKBACK_DEBUG=1; cargo run
 ```
 
 ## Configuración
 
-Ajustable en caliente por la API HTTP local (`127.0.0.1:47800`) mientras el
-filtro corre — sin recompilar ni reiniciar:
+Por ahora, en `src/helpers/constants.rs`, recompilando después de cada cambio:
 
-- `silence` — ticks bloqueados en silencio antes de arrancar la compensación.
-  Por defecto `3`, rango **2-5**. Bájalo si sientes el filtro lento al cambiar
-  de dirección a propósito.
-- `trust` — racha total a la que la dirección se da por confirmada; el tick
-  siguiente ya pasa. Por defecto `7`, rango **6-10**. Súbelo si el kickback se
-  sigue colando.
-- `enabled` — `true`/`false`. Con `false` el hook deja pasar todo tick sin
-  tocarlo (el on/off de la GUI).
+- `SILENCE_TICKS` — ticks bloqueados en silencio antes de arrancar la
+  compensación. Por defecto `3`.
+- `TRUST_TICKS` — racha total a la que la dirección se da por confirmada; el
+  tick siguiente ya pasa. Por defecto `7`.
 
-```powershell
-# ver la config actual (curl.exe, no el alias `curl` de PowerShell)
-curl.exe 127.0.0.1:47800/config
-#  -> {"silence":3,"trust":7,"enabled":true}
-
-# cambiarla (PUT reemplaza los 3 campos; valida rango, 400 si no cuadra)
-curl.exe -X PUT 127.0.0.1:47800/config -d '{\"silence\":4,\"trust\":9,\"enabled\":true}'
-```
-
-Los valores por defecto viven en `src/helpers/constants.go`; los límites de los
-sliders, en `src/server/config_api.go`.
+Súbelos si el kickback se sigue colando; bájalos si sientes el filtro lento al
+cambiar de dirección a propósito.
 
 ## Roadmap
 
-- [ ] `SILENCE_TICKS` / `TRUST_TICKS` ajustables en tiempo real — server
-      `net/http` local en el núcleo Go (`127.0.0.1`), sin recompilar ni reiniciar
-- [ ] GUI de escritorio en **Java** (`gui/`, proceso aparte) que habla con el
-      núcleo por HTTP local — sliders de configuración, estado, toggle
+- [ ] `SILENCE_TICKS` / `TRUST_TICKS` ajustables en tiempo real — servidor
+      HTTP local + GUI (stack por definir), sin recompilar ni reiniciar
 - [ ] Hotkey global + botón en la GUI para activar/desactivar el filtro
 - [ ] Toggle de autostart con Windows (registro `HKCU\...\Run`)
 - [ ] Ícono de bandeja con indicador direccional y color configurable por bloqueo

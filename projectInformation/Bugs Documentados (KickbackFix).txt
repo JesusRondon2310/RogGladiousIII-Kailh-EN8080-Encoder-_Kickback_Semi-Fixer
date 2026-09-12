@@ -228,9 +228,6 @@ NOTAS:
     hilo ya bloqueó el input" — conviene chequear el valor de retorno.
 
 ================================================================================
-A partir de aqui, bugs de Golang.
-
-================================================================================
 LIMITACIÓN 1 — Rachas de kickback más largas que REQUIRED_CONFIRMATIONS
   se cuelan igual
 ================================================================================
