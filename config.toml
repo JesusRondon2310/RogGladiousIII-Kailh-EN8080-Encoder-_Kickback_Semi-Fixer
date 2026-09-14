@@ -1,6 +1,0 @@
-# Kickback_Fix — configuración
-# Edita este archivo y guarda; los cambios se aplican solos, sin reiniciar el programa.
-
-Filtro = true                  # true = filtro activado, false = lo apaga (el programa se cierra solo al detectar el cambio)
-SilencioInicial = 10            # ticks bloqueados en silencio antes de empezar a compensar (0 = sin silencio)
-TechoKickback = 3              # racha total a la que la dirección se da por confirmada (0 = sin compensación por inyección)
