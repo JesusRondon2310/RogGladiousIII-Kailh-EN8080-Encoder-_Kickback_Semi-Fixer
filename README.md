@@ -183,6 +183,39 @@ cargo build --release
 El binario queda en `target\release\Kickback_Fix.exe` — se puede copiar y
 correr en cualquier máquina Windows sin instalar nada más.
 
+## Estructura del proyecto
+
+```
+📦kickback_fix
+ ┣ 📂projectInformation
+ ┃ ┣ 📜Bugs Documentados (KickbackFix).txt
+ ┃ ┣ 📜Redesing.md
+ ┃ ┗ 📜Sistema de Orquestacion Modular (SOM) SE.md
+ ┣ 📂src
+ ┃ ┣ 📂config
+ ┃ ┃ ┣ 📜core.rs
+ ┃ ┃ ┣ 📜mod.rs
+ ┃ ┃ ┗ 📜store.rs
+ ┃ ┣ 📂filter
+ ┃ ┃ ┣ 📜console.rs
+ ┃ ┃ ┣ 📜core.rs
+ ┃ ┃ ┣ 📜detection.rs
+ ┃ ┃ ┣ 📜injector.rs
+ ┃ ┃ ┗ 📜mod.rs
+ ┃ ┣ 📂helpers
+ ┃ ┃ ┣ 📜constants.rs
+ ┃ ┃ ┣ 📜mod.rs
+ ┃ ┃ ┗ 📜trace.rs
+ ┃ ┗ 📜main.rs
+ ┣ 📜Cargo.lock
+ ┣ 📜Cargo.toml
+ ┗ 📜README.md
+```
+
+Cada módulo sigue [SOM](projectInformation/Sistema%20de%20Orquestacion%20Modular%20(SOM)%20SE.md):
+un orquestador (`core.rs`) por módulo, un manifiesto (`mod.rs`) que decide
+qué se expone hacia afuera, y el resto privado por defecto.
+
 ## Créditos y contexto
 
 Encoder identificado como Kailh EN8080 según el desmontaje técnico de
