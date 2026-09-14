@@ -1,1 +1,10 @@
+# Binaries
+*.exe
+*.test
+
+# Rust
 /target
+
+# Editor / tooling
+.zed/
+.claude/
