@@ -1,9 +1,95 @@
-# wheel-fix — Diseño v2: Detección anidada + compensación por inyección
+# Kickback Semi Fixer — Diseño v2: Detección anidada + compensación por inyección
 
-Documento de diseño, sin implementar todavía
-**Fecha:** 2026-08-26 (corregido — ver Nota de corrección)
-**Estado:** PROPUESTO — no implementado. Se implementa **antes** de cualquier
-objetivo del roadmap (ver [Orden de implementación](#6-orden-de-implementación-planeado)).
+**Fecha del diseño:** 2026-08-26 (corregido — ver Nota de corrección)
+**Estado:** IMPLEMENTADO y completado (2026-09-14), con simplificaciones —
+ver la sección siguiente. Las secciones 1-8 son el diseño original y su
+razonamiento; el comportamiento real es el de "Estado de implementación".
+
+---
+
+## Estado de implementación (2026-09-14)
+
+### Qué es y cómo se usa
+
+- **Todo el código es Rust**, desde el inicio del proyecto.
+- **Es un ejecutable independiente, terminado.** Se compila a un único
+  `.exe` que no necesita nada instalado en la máquina donde se use. No
+  tiene instalador, GUI, ícono de bandeja ni arranque automático con
+  Windows — esas tres cosas se evaluaron y se descartaron a propósito (ver
+  README para el detalle, incluida la razón de seguridad detrás del
+  arranque automático).
+- Corre con una consola visible a propósito, como recordatorio de que el
+  filtro sigue activo. Se compila con `cargo build --release`, sin
+  permisos de administrador en ningún momento.
+- Módulos (SOM en Rust): `src/filter/` (`mod.rs` manifiesto, `core.rs`
+  orquestador, `console.rs` consola + bombeo de mensajes + vigilancia de
+  apagado, `detection.rs` hook + máquina de decisión, `injector.rs` hilo
+  inyector) + `src/config/` (`mod.rs`, `core.rs` orquestador, `store.rs`
+  archivo + estado + hilo vigilante de `config.toml`) + `src/helpers/`
+  (`constants.rs`, `trace.rs` macro de logging condicional). Sin
+  micro-lib de try/catch: el manejo de errores es el `Result<T, E>` + `?`
+  nativos de Rust. Win32 a mano vía bindings crudos de la crate
+  `windows-sys` (sin wrappers ni runtime propio).
+- Trace de fases detrás de la env var `KICKBACK_DEBUG`; sin ella, silencio.
+
+### El filtro implementado
+
+Dos valores ajustables en tiempo real desde `config.toml` (se crea solo,
+comentado, y se relee cada segundo — sin reiniciar el programa):
+
+| Campo              | Valor por defecto | Rol                                                                            |
+| ------------------- | ------------------ | -------------------------------------------------------------------------------- |
+| `SilencioInicial`   | 3                   | ticks bloqueados en silencio antes de arrancar la compensación                  |
+| `TechoKickback`     | 7                   | racha total a la que la dirección se da por confirmada; el tick siguiente pasa |
+
+Un tercer campo, `Filtro` (booleano), activa o desactiva el filtro completo
+en caliente — al ponerlo en `false`, el programa se cierra solo, limpio
+(desinstala el hook antes de terminar).
+
+- **Racha** (`update_streak`): cuenta ticks consecutivos en la misma dirección
+  comparando con **el tick anterior** — no con una "dirección confirmada", no
+  hay pase libre para nadie. Cualquier tick en dirección distinta la reinicia
+  a 1. El contador se congela una vez que supera el mayor entre
+  `SilencioInicial` y `TechoKickback` (no desborda nunca; más allá de ese
+  punto el valor exacto ya no importa — ver BUG 7 del registro de bugs
+  sobre por qué el techo tiene que ser el mayor de los dos, no solo
+  `TechoKickback`).
+- **`decide(racha)`** — sin máquina de estados; todo se deriva de la racha:
+  - `racha ≤ SilencioInicial` → bloquea en silencio, no inyecta
+  - `SilencioInicial < racha ≤ TechoKickback` → bloquea el físico **+
+    inyecta 1 sintético** en esa dirección
+  - `racha > TechoKickback` → pasa (dirección confirmada, flujo normal)
+- Con `TechoKickback = 0`, la fase de compensación queda vacía a propósito:
+  el filtro se reduce a un debounce simple de `SilencioInicial` ticks, sin
+  inyectar nada.
+- Un evento inyectado por nosotros (`SELF_INJECTED` / `LLMHF_INJECTED` en
+  `MSLLHOOKSTRUCT.flags`) se deja pasar sin re-procesar, o el hook se dispara
+  a sí mismo en bucle.
+- La inyección corre en un **hilo aparte** (canal `mpsc`); nunca `SendInput`
+  dentro del callback del hook — eso deadlockea el raw input thread (BUG 6).
+
+### Simplificaciones respecto al diseño de abajo
+
+- Un solo umbral de silencio (`SilencioInicial`), no `UMBRAL_DESCARTE` +
+  `UMBRAL_VIGILANCIA`. El "5" del `UMBRAL_VIGILANCIA` nunca se usó; el
+  silencio es de 3 (coincide con la Nota de corrección, no con la sección 4).
+- No hay `BLOQUE_NUEVO_INTENTO` como estado aparte — tras un corte la racha
+  simplemente reinicia y vuelve a pasar por los mismos ticks de silencio.
+- `TECHO_KICKBACK` y `OBJETIVO_COMPENSACION` son **un solo número**
+  (`TechoKickback`), no dos.
+- No existen estados `Vigilancia` / `Compensando` distintos — son rangos de
+  la racha dentro de `decide`.
+- La confirmación no es una acción: es simplemente "la racha superó
+  `TechoKickback`".
+
+### Validación
+
+**El kickback del encoder se resolvió en hardware** (firmware vía Armoury
+Crate + limpieza + swap de switches) antes de poder validar el filtro
+contra kickback real en producción. El filtro compila, corre idéntico al
+diseño, y se probó en vivo con inyección de ticks sintéticos
+indistinguibles de ticks físicos reales — pero no hay señal de kickback
+real para medir su efecto final.
 
 ---
 
@@ -71,13 +157,13 @@ sostenido por los sintéticos.
 
 ### Constantes de diseño
 
-| Constante | Valor | Significado |
-|---|---|---|
-| `UMBRAL_DESCARTE` | 4 | Racha ≤4 ticks en dirección contraria se descarta como ruido |
-| `UMBRAL_VIGILANCIA` | 5 | A partir de aquí arranca vigilancia **y compensación simultánea** |
-| `TECHO_KICKBACK` | 7-8 | Racha que supera esto sin cortarse = imposible que sea kickback |
-| `BLOQUE_NUEVO_INTENTO` | 2-3 | Tras un corte de racha larga, mínimo de ticks limpios antes de arrancar compensación de nuevo |
-| `OBJETIVO_COMPENSACION` | 7 | Suma total (reales + sintéticos) hasta dejar de inyectar |
+| Constante               | Valor | Significado                                                                                   |
+| ----------------------- | ----- | --------------------------------------------------------------------------------------------- |
+| `UMBRAL_DESCARTE`       | 4     | Racha ≤4 ticks en dirección contraria se descarta como ruido                                  |
+| `UMBRAL_VIGILANCIA`     | 5     | A partir de aquí arranca vigilancia **y compensación simultánea**                             |
+| `TECHO_KICKBACK`        | 7-8   | Racha que supera esto sin cortarse = imposible que sea kickback                               |
+| `BLOQUE_NUEVO_INTENTO`  | 2-3   | Tras un corte de racha larga, mínimo de ticks limpios antes de arrancar compensación de nuevo |
+| `OBJETIVO_COMPENSACION` | 7     | Suma total (reales + sintéticos) hasta dejar de inyectar                                      |
 
 ### Flujo, paso a paso
 
@@ -153,20 +239,22 @@ tick 17: A  -> ya no se bloquea ni se inyecta. LAST_DIR=A estable.
 
 ## 6. Orden de implementación planeado
 
-Este diseño se implementa **antes** de cualquier objetivo del roadmap, no
-después. El código de detección debe quedar funcionando al 100% primero —
-sin cambios pendientes sobre su lógica central — y solo entonces se
-construye encima (GUI, hotkey, autostart, bandeja, etc.).
+La lógica de detección va **primero, al 100%**, y solo entonces se construye
+encima (GUI, hotkey, autostart, bandeja).
 
-1. Modularizar `main.rs` — **ya hecho** (`detection.rs`, 85 líneas)
-2. **Este diseño v2** (detección anidada + compensación simultánea) — primero
-3. Hotkey global para activar/desactivar el filtro
-4. `REQUIRED_CONFIRMATIONS` y demás constantes ajustables en tiempo real vía GUI
-5. Toggle de autostart con Windows
-6. Ícono de bandeja con indicador direccional + color configurable
+1. ~~Modularizar~~ — **hecho**. SOM aplicado.
+2. ~~Diseño v2~~ (detección anidada + compensación) — **hecho** (ver "Estado de
+   implementación").
+3. Constantes (`SILENCE_TICKS`, `TRUST_TICKS`) ajustables en runtime — servidor
+   HTTP local + GUI (stack por definir), sin recompilar ni reiniciar.
+   **Siguiente.**
+4. Hotkey global + botón en la GUI para activar/desactivar el filtro.
+5. Toggle de autostart con Windows (registro `HKCU\...\Run`).
+6. Ícono de bandeja con indicador direccional + color configurable por bloqueo.
+7. (Más lejos) port a Linux (`evdev`).
 
-El MVP se considera terminado solo cuando no queden cambios pendientes
-sobre la lógica central del filtro.
+El MVP se considera terminado cuando el ejecutable ajustable en runtime esté
+completo.
 
 ## 7. Diagrama de flujo
 
@@ -192,17 +280,18 @@ flowchart TD
     K --> L[Sigue compensando hasta<br/>completar OBJETIVO_COMPENSACION]
     L --> M[Flujo normal<br/>deja de bloquear e inyectar]
 
-    style D fill:#e8e8e8,stroke:#888
-    style E fill:#f5d0c5,stroke:#c0684a
-    style I fill:#f5d0c5,stroke:#c0684a
-    style F fill:#f9e0a8,stroke:#c99a3a
-    style G fill:#f9e0a8,stroke:#c99a3a
-    style K fill:#b8ddc9,stroke:#4a9670
-    style L fill:#b8ddc9,stroke:#4a9670
-    style M fill:#e8e8e8,stroke:#888
+    style D fill:#e8e8e8,stroke:#888,color:#1a1a1a
+    style E fill:#f5d0c5,stroke:#c0684a,color:#5c2a15
+    style I fill:#f5d0c5,stroke:#c0684a,color:#5c2a15
+    style F fill:#f9e0a8,stroke:#c99a3a,color:#5c4413
+    style G fill:#f9e0a8,stroke:#c99a3a,color:#5c4413
+    style K fill:#b8ddc9,stroke:#4a9670,color:#1a4030
+    style L fill:#b8ddc9,stroke:#4a9670,color:#1a4030
+    style M fill:#e8e8e8,stroke:#888,color:#1a1a1a
 ```
 
 **Leyenda de colores:**
+
 - **Gris** — pasos neutrales, sin decisión (tick llega, silencio inicial, flujo normal)
 - **Ámbar** — vigilancia activa, compensación en curso
 - **Coral** — descartado (ruido o kickback contenido), inyección detenida
