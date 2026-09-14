@@ -1,3 +1,5 @@
+//!helpers/constants.rs
+
 // ---- Dirección de la rueda ----
 pub const WHEEL_UP: i32 = 1;
 pub const WHEEL_DOWN: i32 = -1;
@@ -23,7 +25,3 @@ pub const CTRL_CLOSE_EVENT: u32 = 2;
 pub const MOUSE_INPUT: u32 = 0; // INPUT.type = mouse (INPUT_MOUSE)
 pub const WHEEL_MOVE: u32 = 0x0800; // MOUSEINPUT.dwFlags: movimiento de rueda (MOUSEEVENTF_WHEEL)
 pub const ONE_EVENT: u32 = 1; // SendInput debe insertar exactamente 1
-
-// ---- Config del filtro (tuning; manipulables en runtime más adelante) ----
-pub const SILENCE_TICKS: i32 = 3; // racha que se bloquea en silencio antes de arrancar la compensación
-pub const TRUST_TICKS: i32 = 7; // racha total a la que la dirección se da por confirmada; el tick 8+ pasa

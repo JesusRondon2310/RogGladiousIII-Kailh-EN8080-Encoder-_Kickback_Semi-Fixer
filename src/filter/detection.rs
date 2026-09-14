@@ -1,3 +1,5 @@
+//!filter/detection.rs
+
 use std::sync::atomic::{AtomicI32, Ordering};
 
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -6,6 +8,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::injector::enqueue_manager;
+use crate::config;
 use crate::helpers::constants as consts;
 use crate::trace;
 
@@ -34,14 +37,15 @@ fn update_streak(direction: i32) -> i32 {
         return 1;
     }
     let n = STREAK_COUNT.load(Ordering::SeqCst);
-    if n > consts::TRUST_TICKS { return n; }
+    let cap = config::silencio_inicial().max(config::techo_kickback());
+    if n > cap { return n; }
     STREAK_COUNT.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 fn decide(streak: i32) -> Action {
-    if streak <= consts::SILENCE_TICKS { return Action::Block; }
-    
-    if streak <= consts::TRUST_TICKS { return Action::BlockAndInject; }
+    if streak <= config::silencio_inicial() { return Action::Block; }
+
+    if streak <= config::techo_kickback() { return Action::BlockAndInject; }
     Action::Pass
 }
 

@@ -253,14 +253,23 @@ porque alguien de otro piso tocó directo su puerta para la tarea puntual que
 - `helpers/` es SOLO para lo reutilizable entre varios módulos. Un valor,
   constante o utilidad que solo usa un módulo se queda dentro de ese
   módulo, no sube a `helpers/`.
-- **Un interno nunca llama a la `pub fn` de otro módulo directamente** —
-  esa llamada cruzando módulos es exclusiva del orquestador o el
-  mini-orquestador (ver [5.3](#53-comunicación-entre-módulos)). Si un
-  interno necesita un dato de otro módulo, se lo pasa por parámetro quien
-  lo invoca (orquestador/mini-orquestador), el interno no lo va a buscar
-  por su cuenta. Un interno que cruza esa línea dejó de ser un interno —
-  hay que corregirlo, o reconocer que en realidad hace trabajo de
-  mini-orquestador y subir su rol.
+- **Un interno sí puede llamar hacia afuera a la `pub fn` de otro
+  módulo** (su orquestador) — es simplemente usar una dependencia pública,
+  no lo compromete. El orquestador existe justo para eso: ser llamado.
+  Ejemplo: `filter/detection.rs` (interno) llamando a `config::get()`
+  (orquestador de otro módulo) es válido.
+- **Lo que un interno nunca hace es llegar al interno de otro módulo.**
+  Ejemplo: `filter/detection.rs` llamando directo a un interno de
+  `gui/button.rs` — eso sí está prohibido (y el compilador ya lo impide
+  solo, porque ese interno nunca es `pub`; ver [2.2](#22-encapsulamiento-estricto)).
+  Si `gui/core.rs` expone la lógica de `button.rs` a través de su propia
+  `pub fn`, ahí sí se puede llegar — pero pasando por el orquestador de
+  `gui`, nunca directo al interno.
+- **Lo que sí está reservado al orquestador (siempre) y al mini-orquestador
+  (solo desde nivel 3, solo su función puntual `pub`) es ser el destino de
+  una llamada externa** — exponerse a sí mismo. Un interno nunca se marca
+  `pub`, nunca es el que otro módulo llama; pero sí puede ser el que
+  origina la llamada hacia otro módulo.
 
 ---
 

@@ -1,3 +1,5 @@
+//!helpers/trace.rs
+
 use std::env;
 use std::sync::LazyLock;
 

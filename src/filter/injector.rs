@@ -1,3 +1,5 @@
+//!filter/injector.rs
+
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::OnceLock;
 use std::thread;
