@@ -1,6 +1,6 @@
 [package]
-name = "Kickback_Fix"
-version = "0.1.0"
+name = "Kickback_Semi_Fixer"
+version = "1.0.0"
 edition = "2024"
 
 [dependencies]
@@ -12,3 +12,12 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Threading",
 ] }
+serde = { version = "1.0.229", features = ["derive"] }
+toml = "1.1.6"
+
+[profile.release]
+strip = true
+opt-level = "z"
+lto = true
+panic = "abort"
+codegen-units = 1

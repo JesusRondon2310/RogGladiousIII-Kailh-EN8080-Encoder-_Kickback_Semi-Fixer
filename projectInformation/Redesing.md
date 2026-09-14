@@ -1,57 +1,67 @@
-# wheel-fix — Diseño v2: Detección anidada + compensación por inyección
+# Kickback Semi Fixer — Diseño v2: Detección anidada + compensación por inyección
 
 **Fecha del diseño:** 2026-08-26 (corregido — ver Nota de corrección)
-**Estado:** IMPLEMENTADO en Go (2026-09-10), luego portado a Rust (2026-09-12),
-con simplificaciones — ver la sección siguiente. Las secciones 1-8 son el
-diseño original y su razonamiento; el comportamiento real es el de "Estado de
-implementación".
+**Estado:** IMPLEMENTADO y completado (2026-09-14), con simplificaciones —
+ver la sección siguiente. Las secciones 1-8 son el diseño original y su
+razonamiento; el comportamiento real es el de "Estado de implementación".
 
 ---
 
-## Estado de implementación (2026-09-12)
+## Estado de implementación (2026-09-14)
 
-### Qué es y cómo se corre
+### Qué es y cómo se usa
 
-- **Todo el código es Rust.** El proyecto se escribió originalmente en Rust,
-  se reescribió por completo a Go como ejercicio de aprendizaje, y luego se
-  volvió a portar a Rust — con las lecciones del paso por Go (sobre todo el
-  BUG 6, el deadlock de `SendInput`) ya incorporadas desde el primer día del
-  puerto.
-- **No es un ejecutable distribuible todavía.** No hay instalador, GUI, ícono
-  de bandeja ni autostart — eso es el roadmap.
-- Se compila desde el código fuente y se corre en una terminal:
-  `cargo run` — **sin permisos de administrador**.
-- Módulos (SOM en Rust): `src/filter/mod.rs` (manifiesto) + `src/filter/core.rs`
-  (orquestador) + `src/filter/detection.rs` (hook + máquina de decisión) +
-  `src/filter/injector.rs` (hilo inyector) + `src/helpers/constants.rs` +
-  `src/helpers/trace.rs` (macro de logging condicional). Sin micro-lib de
-  try/catch: el manejo de errores es el `Result<T, E>` + `?` nativos de Rust.
-  Win32 a mano vía bindings crudos de la crate `windows-sys` (sin wrappers, sin
-  runtime propio — mismo nivel de control que el `syscall` de Go).
+- **Todo el código es Rust**, desde el inicio del proyecto.
+- **Es un ejecutable independiente, terminado.** Se compila a un único
+  `.exe` que no necesita nada instalado en la máquina donde se use. No
+  tiene instalador, GUI, ícono de bandeja ni arranque automático con
+  Windows — esas tres cosas se evaluaron y se descartaron a propósito (ver
+  README para el detalle, incluida la razón de seguridad detrás del
+  arranque automático).
+- Corre con una consola visible a propósito, como recordatorio de que el
+  filtro sigue activo. Se compila con `cargo build --release`, sin
+  permisos de administrador en ningún momento.
+- Módulos (SOM en Rust): `src/filter/` (`mod.rs` manifiesto, `core.rs`
+  orquestador, `console.rs` consola + bombeo de mensajes + vigilancia de
+  apagado, `detection.rs` hook + máquina de decisión, `injector.rs` hilo
+  inyector) + `src/config/` (`mod.rs`, `core.rs` orquestador, `store.rs`
+  archivo + estado + hilo vigilante de `config.toml`) + `src/helpers/`
+  (`constants.rs`, `trace.rs` macro de logging condicional). Sin
+  micro-lib de try/catch: el manejo de errores es el `Result<T, E>` + `?`
+  nativos de Rust. Win32 a mano vía bindings crudos de la crate
+  `windows-sys` (sin wrappers ni runtime propio).
 - Trace de fases detrás de la env var `KICKBACK_DEBUG`; sin ella, silencio.
 
 ### El filtro implementado
 
-Dos constantes (por ahora `const`; runtime-ajustables es el próximo paso del
-roadmap):
+Dos valores ajustables en tiempo real desde `config.toml` (se crea solo,
+comentado, y se relee cada segundo — sin reiniciar el programa):
 
-| Constante       | Valor | Rol                                                                     |
-| --------------- | ----- | ----------------------------------------------------------------------- |
-| `SILENCE_TICKS` | 3     | ticks bloqueados en silencio antes de arrancar la compensación          |
-| `TRUST_TICKS`   | 7     | racha total a la que la dirección se da por confirmada; el tick 8+ pasa |
+| Campo              | Valor por defecto | Rol                                                                            |
+| ------------------- | ------------------ | -------------------------------------------------------------------------------- |
+| `SilencioInicial`   | 3                   | ticks bloqueados en silencio antes de arrancar la compensación                  |
+| `TechoKickback`     | 7                   | racha total a la que la dirección se da por confirmada; el tick siguiente pasa |
+
+Un tercer campo, `Filtro` (booleano), activa o desactiva el filtro completo
+en caliente — al ponerlo en `false`, el programa se cierra solo, limpio
+(desinstala el hook antes de terminar).
 
 - **Racha** (`update_streak`): cuenta ticks consecutivos en la misma dirección
   comparando con **el tick anterior** — no con una "dirección confirmada", no
   hay pase libre para nadie. Cualquier tick en dirección distinta la reinicia
-  a 1. Capeada en `TRUST_TICKS + 1` (no desborda nunca; más allá de ahí el
-  valor da igual).
+  a 1. El contador se congela una vez que supera el mayor entre
+  `SilencioInicial` y `TechoKickback` (no desborda nunca; más allá de ese
+  punto el valor exacto ya no importa — ver BUG 7 del registro de bugs
+  sobre por qué el techo tiene que ser el mayor de los dos, no solo
+  `TechoKickback`).
 - **`decide(racha)`** — sin máquina de estados; todo se deriva de la racha:
-  - `racha ≤ SILENCE_TICKS` → bloquea en silencio, no inyecta
-  - `SILENCE_TICKS < racha ≤ TRUST_TICKS` → bloquea el físico **+ inyecta 1
-    sintético** en esa dirección
-  - `racha > TRUST_TICKS` → pasa (dirección confirmada, flujo normal)
-- Por gesto: 7 físicos bloqueados (3 silencio + 4 compensados), 4 sintéticos
-  inyectados.
+  - `racha ≤ SilencioInicial` → bloquea en silencio, no inyecta
+  - `SilencioInicial < racha ≤ TechoKickback` → bloquea el físico **+
+    inyecta 1 sintético** en esa dirección
+  - `racha > TechoKickback` → pasa (dirección confirmada, flujo normal)
+- Con `TechoKickback = 0`, la fase de compensación queda vacía a propósito:
+  el filtro se reduce a un debounce simple de `SilencioInicial` ticks, sin
+  inyectar nada.
 - Un evento inyectado por nosotros (`SELF_INJECTED` / `LLMHF_INJECTED` en
   `MSLLHOOKSTRUCT.flags`) se deja pasar sin re-procesar, o el hook se dispara
   a sí mismo en bucle.
@@ -60,24 +70,26 @@ roadmap):
 
 ### Simplificaciones respecto al diseño de abajo
 
-- Un solo umbral de silencio (`SILENCE_TICKS`), no `UMBRAL_DESCARTE` +
-  `UMBRAL_VIGILANCIA`. El "5" del `UMBRAL_VIGILANCIA` nunca se usó; el silencio
-  es de 3 (coincide con la Nota de corrección, no con la sección 4).
+- Un solo umbral de silencio (`SilencioInicial`), no `UMBRAL_DESCARTE` +
+  `UMBRAL_VIGILANCIA`. El "5" del `UMBRAL_VIGILANCIA` nunca se usó; el
+  silencio es de 3 (coincide con la Nota de corrección, no con la sección 4).
 - No hay `BLOQUE_NUEVO_INTENTO` como estado aparte — tras un corte la racha
-  simplemente reinicia y vuelve a pasar por los mismos 3 ticks de silencio.
+  simplemente reinicia y vuelve a pasar por los mismos ticks de silencio.
 - `TECHO_KICKBACK` y `OBJETIVO_COMPENSACION` son **un solo número**
-  (`TRUST_TICKS = 7`), no dos.
-- No existen estados `Vigilancia` / `Compensando` distintos — son rangos de la
-  racha dentro de `decide`.
-- La confirmación no es una acción: es simplemente "la racha pasó
-  `TRUST_TICKS`".
+  (`TechoKickback`), no dos.
+- No existen estados `Vigilancia` / `Compensando` distintos — son rangos de
+  la racha dentro de `decide`.
+- La confirmación no es una acción: es simplemente "la racha superó
+  `TechoKickback`".
 
 ### Validación
 
 **El kickback del encoder se resolvió en hardware** (firmware vía Armoury
-Crate + limpieza + swap de switches) antes de poder validar v2 contra kickback
-real. El filtro compila, pasa los tests y corre idéntico al diseño, pero no
-hay señal de kickback para medir su efecto en producción.
+Crate + limpieza + swap de switches) antes de poder validar el filtro
+contra kickback real en producción. El filtro compila, corre idéntico al
+diseño, y se probó en vivo con inyección de ticks sintéticos
+indistinguibles de ticks físicos reales — pero no hay señal de kickback
+real para medir su efecto final.
 
 ---
 
@@ -230,7 +242,7 @@ tick 17: A  -> ya no se bloquea ni se inyecta. LAST_DIR=A estable.
 La lógica de detección va **primero, al 100%**, y solo entonces se construye
 encima (GUI, hotkey, autostart, bandeja).
 
-1. ~~Modularizar~~ — **hecho**. Reescritura completa a Go, SOM aplicado.
+1. ~~Modularizar~~ — **hecho**. SOM aplicado.
 2. ~~Diseño v2~~ (detección anidada + compensación) — **hecho** (ver "Estado de
    implementación").
 3. Constantes (`SILENCE_TICKS`, `TRUST_TICKS`) ajustables en runtime — servidor

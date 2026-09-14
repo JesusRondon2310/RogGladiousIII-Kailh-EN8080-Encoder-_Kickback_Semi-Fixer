@@ -1,14 +1,14 @@
 ================================================================================
-wheel-fix (Kickback_Fix) - REGISTRO DE BUGS CORREGIDOS
+Kickback Semi Fixer - REGISTRO DE BUGS CORREGIDOS
 ================================================================================
-Última actualización: 2026-09-02
-Total de bugs: 6
+Última actualización: 2026-09-14
+Total de bugs: 7
 
 ================================================================================
 ÍNDICE POR SECCIONES
 ================================================================================
 1.  Compilación / bindings de Win32 (crate windows) ....... BUG 1,2
-2.  Lógica de detección de kickback ....................... BUG 3,4,5
+2.  Lógica de detección de kickback ....................... BUG 3,4,5,7
 3.  Inyección de ticks sintéticos / hooks de bajo nivel ... BUG 6
 4.  Limitaciones conocidas (no resueltas al 100%) ......... LIMITACIÓN 1
 ================================================================================
@@ -228,46 +228,107 @@ NOTAS:
     hilo ya bloqueó el input" — conviene chequear el valor de retorno.
 
 ================================================================================
-LIMITACIÓN 1 — Rachas de kickback más largas que REQUIRED_CONFIRMATIONS
-  se cuelan igual
+BUG 7 — Racha se congelaba prematuramente si TechoKickback <= SilencioInicial
+================================================================================
+SÍNTOMA:
+  Al portar SILENCE_TICKS/TRUST_TICKS de constantes fijas a config.toml
+  ajustable en runtime (SilencioInicial/TechoKickback), probando la
+  combinación SilencioInicial=10 / TechoKickback=0, el filtro dejó de
+  dejar pasar el scroll por completo: bloqueaba en silencio para siempre,
+  sin importar cuánto se siguiera girando la rueda en la misma dirección.
+
+CAUSA:
+  update_streak() tenía una optimización para no dejar crecer la racha sin
+  límite durante una sesión de scroll muy larga: una vez que la racha
+  superaba TechoKickback, dejaba de incrementarse y quedaba "congelada" en
+  ese valor. Esa optimización asumía implícitamente que TechoKickback
+  siempre iba a ser mayor que SilencioInicial (como con los valores por
+  defecto, 7 > 3) — así, el valor congelado ya caía garantizado en la zona
+  de "Pass" de decide(). Al volverse ambos valores configurables de forma
+  independiente en runtime, un usuario podía poner TechoKickback igual o
+  menor a SilencioInicial, y la racha se congelaba en un valor que TODAVÍA
+  caía dentro de la zona de bloqueo (streak <= SilencioInicial) — quedando
+  atascada bloqueando para siempre, porque nunca volvía a crecer.
+
+SOLUCIÓN:
+  El techo real para dejar de incrementar la racha pasó de ser solo
+  TechoKickback a ser max(SilencioInicial, TechoKickback). Así, sea cual
+  sea la combinación de valores que el usuario ponga en config.toml, la
+  racha siempre se congela en un punto que ya superó ambos umbrales —
+  decide() siempre devuelve Pass desde ahí en adelante, nunca puede quedar
+  atascada en Block. Se sigue evitando el crecimiento sin límite del
+  contador (el problema original que la optimización buscaba resolver),
+  pero ahora de forma segura para cualquier combinación de configuración.
+
+RESULTADO:
+  Probado con SilencioInicial=10/TechoKickback=0 (el caso que reveló el
+  bug) y con SilencioInicial=TechoKickback=10 — en ambos casos el filtro
+  deja de bloquear correctamente después del número de ticks esperado,
+  sin quedar atascado.
+
+ARCHIVO: src/filter/detection.rs (update_streak)
+ESTADO: RESUELTO
+
+NOTAS:
+  - Este bug no existía en las versiones anteriores del filtro porque
+    SILENCE_TICKS/TRUST_TICKS eran constantes fijas en el código, elegidas
+    siempre con TRUST_TICKS > SILENCE_TICKS.
+    Solo se volvió alcanzable al exponer ambos valores como configurables
+    de forma independiente en tiempo real (config.toml), permitiendo
+    combinaciones que el diseño original nunca consideró.
+  - Lección: cuando una invariante implícita del código (acá, "TechoKickback
+    siempre es mayor que SilencioInicial") deja de estar garantizada por el
+    diseño y pasa a depender de que el usuario elija bien los valores, hay
+    que hacerla explícita en el código (el max()), no asumirla.
+
+================================================================================
+LIMITACIÓN 1 — Rachas de kickback más largas que TechoKickback se cuelan igual
 ================================================================================
 CONTEXTO:
-  El esquema de confirmación por N ticks consecutivos (REQUIRED_CONFIRMATIONS)
-  reduce la probabilidad de que el kickback se cuele, pero no la elimina:
-  si el encoder genera una racha de fantasmas consecutivos en la misma
-  dirección contraria más larga que N, esa racha completa se confirma como
-  si fuera un cambio de dirección real.
+  El esquema de confirmación por N ticks consecutivos (antes
+  REQUIRED_CONFIRMATIONS en el v1; hoy TechoKickback, dentro del esquema
+  v2 de silencio + compensación por inyección) reduce la probabilidad de
+  que el kickback se cuele, pero no la elimina: si el encoder genera una
+  racha de fantasmas consecutivos en la misma dirección contraria más
+  larga que TechoKickback, esa racha completa se confirma como si fuera
+  un cambio de dirección real.
 
 EVIDENCIA:
-  Se observaron rachas reales de tamaño variable en pruebas: 2, 3, 4 y al
-  menos 6 ticks fantasma consecutivos. Con REQUIRED_CONFIRMATIONS = 3 (4
-  ticks totales necesarios para colarse), se confirmaron falsos positivos
-  en varias ocasiones. También se confirmó que el patrón no es exclusivo de
-  reversiones rápidas y deliberadas: se observó al menos un caso durante
-  scroll normal (Nexus Mods, YouTube, Zed), aunque con baja frecuencia
-  (1 falso positivo en más de 15 cambios de dirección reales en una sesión
-  de prueba prolongada). Tras la corrección de BUG 5, el usuario reportó
-  que el kickback residual que persiste corresponde a rachas del encoder
-  más largas que REQUIRED_CONFIRMATIONS (actualmente 6) — comportamiento
-  esperado dado esta limitación, no un nuevo defecto del filtro.
+  Se observaron rachas reales de tamaño variable en pruebas sobre el v1:
+  2, 3, 4 y al menos 6 ticks fantasma consecutivos. Con
+  REQUIRED_CONFIRMATIONS = 3 (4 ticks totales necesarios para colarse), se
+  confirmaron falsos positivos en varias ocasiones. También se confirmó
+  que el patrón no es exclusivo de reversiones rápidas y deliberadas: se
+  observó al menos un caso durante scroll normal (Nexus Mods, YouTube,
+  Zed), aunque con baja frecuencia (1 falso positivo en más de 15 cambios
+  de dirección reales en una sesión de prueba prolongada). Esta evidencia
+  es histórica (del esquema v1), pero el mecanismo de fondo que describe
+  —una racha fantasma más larga que el umbral se confirma como real— sigue
+  aplicando igual de conceptualmente al TechoKickback del v2 actual.
 
 POR QUÉ NO SE RESUELVE AL 100%:
-  No existe un valor fijo de REQUIRED_CONFIRMATIONS que cubra toda racha
-  posible sin volver el filtro perceptiblemente lento en cambios de
-  dirección legítimos — es un trade-off entre precisión y responsividad,
-  no un bug con una solución única.
+  No existe un valor fijo de TechoKickback que cubra toda racha posible
+  sin volver el filtro perceptiblemente lento en cambios de dirección
+  legítimos — es un trade-off entre precisión y responsividad, no un bug
+  con una solución única.
 
-MITIGACIÓN PLANEADA:
-  Hacer REQUIRED_CONFIRMATIONS ajustable en tiempo real desde la GUI
-  (rango 1-10), para que el usuario pueda subirlo si el patrón de kickback
-  de su unidad empeora, sin necesidad de recompilar. A más largo plazo,
-  el diseño v2 (detección anidada + compensación por inyección, ver
-  Redesing.txt) apunta a resolver el trade-off de raíz.
+MITIGACIÓN:
+  Lo que en su momento era "mitigación planeada" (TechoKickback ajustable
+  en tiempo real sin recompilar, para que el usuario lo suba si el
+  kickback de su unidad empeora) **ya está implementado** — no vía GUI
+  (se evaluó y se descartó, ver README), sino vía config.toml con
+  recarga en caliente. El diseño v2 completo (detección anidada +
+  compensación por inyección, ver Redesing.md) también ya está
+  implementado, no es un plan a futuro.
+  Lo único que sigue sin resolverse es el trade-off de fondo en sí mismo
+  (precisión vs. responsividad) — eso no tiene solución de código, es una
+  limitación conceptual del enfoque de "confirmar por racha".
 
-ARCHIVO: src/main.rs (const REQUIRED_CONFIRMATIONS)
-ESTADO: NO RESUELTO (mitigación parcial vía número de confirmaciones;
-  pendiente de exponer como control ajustable en la GUI, y evaluación de
-  diseño v2 a más largo plazo)
+ARCHIVO: src/filter/detection.rs (decide, update_streak) + config.toml
+  (TechoKickback)
+ESTADO: MITIGACIÓN RESUELTA (ajustable en runtime vía config.toml); la
+  LIMITACIÓN DE FONDO permanece NO RESUELTA por diseño (no es una tarea
+  pendiente, es un trade-off inherente al enfoque).
 
 ================================================================================
 FIN DEL REGISTRO
