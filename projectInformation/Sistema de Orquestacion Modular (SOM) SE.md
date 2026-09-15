@@ -394,6 +394,12 @@ incumplimiento ha causado bugs reales (ver el origen en [6.5](#65-modelado-de-es
   archivo.
 - No se ponen comentarios de cabecera que expliquen el rol del archivo —
   el nombre del archivo y su estructura ya lo dicen.
+- **Excepción:** un comentario de módulo (`//!`) en la primera línea con
+  la ruta del archivo (ej. `//! config/core.rs`) sí se permite — no es
+  "explicar el rol" (no dice qué hace el archivo, solo repite dónde
+  está), es una ayuda de navegación para cuando el código se lee fuera
+  del editor (una terminal, un log, un chat) y el nombre de pestaña no
+  está a la vista.
 - "Breve" se refiere a no repetir lo que el código dice, no al ancho de
   línea. El único límite de tamaño es el de líneas por archivo (sección [2.3](#23-archivos-pequeños-y-responsables)).
 
@@ -615,14 +621,21 @@ específica. Ejemplo real (`filter/mod.rs`):
 mod core;
 mod detection;
 mod injector;
-pub use core::run;
+pub use core::*;
 ```
 
 Aquí `detection` e `injector` quedan declarados (y por eso visibles entre
 sí y desde `core`, dentro del mismo módulo `filter`), pero al no tener su
 propio `pub use`, son invisibles para cualquier módulo fuera de `filter`.
-Solo `run` — la única función que el orquestador `core` expone — cruza esa
-frontera.
+
+**`pub use core::*;`, no `pub use core::run;`** — un re-export con comodín,
+no uno función por función. Expone automáticamente **todo** lo que
+`core.rs` marque `pub`, presente y futuro, sin que nadie tenga que
+acordarse de actualizar la lista cada vez que el orquestador gane una
+`pub fn` nueva. Re-exportar función por función (`pub use core::{a, b}`)
+es la firma del **mini-orquestador** (curar una función puntual, ver 4.2)
+— aplicarla también al orquestador mezcla los dos roles. El orquestador
+expone su superficie completa, sin curarla a mano.
 
 ### Paso 3: Dividir la lógica interna en mini-orquestadores
 
